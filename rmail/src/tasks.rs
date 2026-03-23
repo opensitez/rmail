@@ -16,7 +16,11 @@ static NEXT_ID: AtomicI32 = AtomicI32::new(1);
 #[derive(Clone)]
 enum TaskEvent {
     Add { id: i32, icon: String, text: String },
+    /// Detailed task with title (account name) and subtitle (status)
+    AddDetailed { id: i32, icon: String, title: String, subtitle: String },
     Update { id: i32, text: String },
+    /// Update with separate subtitle and optional progress (0.0-1.0, negative = indeterminate)
+    UpdateDetailed { id: i32, subtitle: String, progress: f64 },
     Remove { id: i32 },
     Error { icon: String, text: String },
 }
@@ -40,9 +44,21 @@ pub fn add_task(icon: &str, text: &str) -> i32 {
     id
 }
 
+/// Add a detailed task with title + subtitle. Returns task ID.
+pub fn add_detailed_task(icon: &str, title: &str, subtitle: &str) -> i32 {
+    let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
+    post(TaskEvent::AddDetailed { id, icon: icon.to_string(), title: title.to_string(), subtitle: subtitle.to_string() });
+    id
+}
+
 /// Update an existing task's text.
 pub fn update_task(id: i32, text: &str) {
     post(TaskEvent::Update { id, text: text.to_string() });
+}
+
+/// Update a detailed task's subtitle and progress bar.
+pub fn update_detailed_task(id: i32, subtitle: &str, progress: f64) {
+    post(TaskEvent::UpdateDetailed { id, subtitle: subtitle.to_string(), progress });
 }
 
 /// Remove a task (it's done).
@@ -90,6 +106,53 @@ pub fn build_tasks_panel() -> gtk4::Widget {
         .build();
     vbox.append(&scroll);
 
+    // Double-click on error row → show detail dialog
+    {
+        let lb = listbox.clone();
+        let gesture = gtk4::GestureClick::new();
+        gesture.set_button(1);
+        gesture.connect_released(move |g, n_press, _x, y| {
+            if n_press != 2 { return; }
+            // Find which row was clicked
+            let Some(widget) = g.widget() else { return };
+            let Some(root) = widget.root() else { return };
+            let window: gtk4::Window = match root.downcast::<gtk4::Window>() {
+                Ok(w) => w,
+                Err(_) => return,
+            };
+
+            // Walk ListBox children to find the row at y
+            let mut child = lb.first_child();
+            while let Some(c) = child {
+                if let Some(inner) = c.first_child() {
+                    if inner.widget_name() == "error-row" {
+                        // Check if click is within this row's bounds
+                        let (_, row_y) = c.translate_coordinates(&lb, 0.0, 0.0).unwrap_or((0.0, 0.0));
+                        let row_h = c.height() as f64;
+                        if y >= row_y && y < row_y + row_h {
+                            // Get full error text from tooltip
+                            let detail = inner.tooltip_text()
+                                .map(|s| s.to_string())
+                                .unwrap_or_default();
+                            if !detail.is_empty() {
+                                let dlg = gtk4::AlertDialog::builder()
+                                    .modal(true)
+                                    .message("Error Details")
+                                    .detail(&detail)
+                                    .buttons(["OK"])
+                                    .build();
+                                dlg.show(Some(&window));
+                            }
+                            return;
+                        }
+                    }
+                }
+                child = c.next_sibling();
+            }
+        });
+        listbox.add_controller(gesture);
+    }
+
     // Poll timer — drains events from background threads
     {
         let lb = listbox.clone();
@@ -131,6 +194,87 @@ pub fn build_tasks_panel() -> gtk4::Widget {
                         row.append(&label);
 
                         lb.append(&row);
+                    }
+                    TaskEvent::AddDetailed { id, icon, title, subtitle } => {
+                        let row = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+                        row.set_margin_start(8);
+                        row.set_margin_end(8);
+                        row.set_margin_top(6);
+                        row.set_margin_bottom(6);
+                        row.set_widget_name(&format!("task-{}", id));
+
+                        if !icon.is_empty() {
+                            let img = gtk4::Image::from_icon_name(&icon);
+                            img.set_pixel_size(16);
+                            img.set_valign(gtk4::Align::Start);
+                            row.append(&img);
+                        }
+
+                        // Two-line layout: title + subtitle + progress bar
+                        let info = gtk4::Box::new(gtk4::Orientation::Vertical, 2);
+                        info.set_hexpand(true);
+
+                        let title_lbl = gtk4::Label::new(Some(&title));
+                        title_lbl.set_halign(gtk4::Align::Start);
+                        title_lbl.set_ellipsize(pango::EllipsizeMode::End);
+                        title_lbl.set_widget_name("task-label");
+                        info.append(&title_lbl);
+
+                        let sub_lbl = gtk4::Label::new(Some(&subtitle));
+                        sub_lbl.set_halign(gtk4::Align::Start);
+                        sub_lbl.set_ellipsize(pango::EllipsizeMode::End);
+                        sub_lbl.add_css_class("dim-label");
+                        sub_lbl.set_widget_name("task-subtitle");
+                        info.append(&sub_lbl);
+
+                        let pbar = gtk4::ProgressBar::new();
+                        pbar.set_widget_name("task-progress");
+                        pbar.pulse(); // indeterminate initially
+                        info.append(&pbar);
+
+                        row.append(&info);
+
+                        let spinner = gtk4::Spinner::new();
+                        spinner.set_spinning(true);
+                        spinner.set_valign(gtk4::Align::Start);
+                        row.append(&spinner);
+
+                        lb.append(&row);
+                    }
+                    TaskEvent::UpdateDetailed { id, subtitle, progress } => {
+                        let target = format!("task-{}", id);
+                        let mut child = lb.first_child();
+                        while let Some(c) = child {
+                            if let Some(row) = c.first_child() {
+                                if row.widget_name() == target {
+                                    let mut w = row.first_child();
+                                    while let Some(ww) = w {
+                                        // Find the info vbox
+                                        let mut inner = ww.first_child();
+                                        while let Some(iw) = inner {
+                                            if iw.widget_name() == "task-subtitle" {
+                                                if let Some(lbl) = iw.downcast_ref::<gtk4::Label>() {
+                                                    lbl.set_text(&subtitle);
+                                                }
+                                            }
+                                            if iw.widget_name() == "task-progress" {
+                                                if let Some(pb) = iw.downcast_ref::<gtk4::ProgressBar>() {
+                                                    if progress < 0.0 {
+                                                        pb.pulse();
+                                                    } else {
+                                                        pb.set_fraction(progress.min(1.0));
+                                                    }
+                                                }
+                                            }
+                                            inner = iw.next_sibling();
+                                        }
+                                        w = ww.next_sibling();
+                                    }
+                                    break;
+                                }
+                            }
+                            child = c.next_sibling();
+                        }
                     }
                     TaskEvent::Update { id, text } => {
                         let target = format!("task-{}", id);
@@ -177,6 +321,8 @@ pub fn build_tasks_panel() -> gtk4::Widget {
                         row.set_margin_top(4);
                         row.set_margin_bottom(4);
                         row.set_widget_name("error-row");
+                        // Store full error text for detail dialog
+                        row.set_tooltip_text(Some(&text));
 
                         let img = gtk4::Image::from_icon_name(
                             if icon.is_empty() { "dialog-error-symbolic" } else { &icon });
@@ -187,8 +333,8 @@ pub fn build_tasks_panel() -> gtk4::Widget {
                         label.set_halign(gtk4::Align::Start);
                         label.set_hexpand(true);
                         label.set_ellipsize(pango::EllipsizeMode::End);
-                        label.set_wrap(true);
                         label.add_css_class("error");
+                        label.set_widget_name("error-label");
                         row.append(&label);
 
                         // Dismiss button

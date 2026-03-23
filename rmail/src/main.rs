@@ -29,6 +29,8 @@ struct AppState {
     data_dir: PathBuf,
     store: macmbx::store::Store,
     conf: Rc<RefCell<macmbx::conf::Conf>>,
+    /// Shared conf for mailer (same data, thread-safe wrapper)
+    conf_shared: std::sync::Arc<std::sync::Mutex<macmbx::conf::Conf>>,
     /// Shared mailer — created once, used by scheduler + compose.
     mailer: std::sync::Arc<macmbx::mailer::Mailer>,
     /// Address books for autocomplete.
@@ -51,9 +53,12 @@ impl AppState {
         eprintln!("rMail: loaded {} from {}",
             store.count_mailboxes(), mailboxes_dir.display());
 
+        // Create shared conf for mailer (thread-safe copy, synced on settings save)
+        let conf_shared = std::sync::Arc::new(std::sync::Mutex::new(conf.clone()));
+
         // Create shared mailer (port of main_eudora.c g_mailer setup)
         let mailer = std::sync::Arc::new(
-            scheduler::create_mailer_from_conf(&conf, &mailboxes_dir));
+            scheduler::create_mailer_from_conf(conf_shared.clone(), &mailboxes_dir));
 
         // Load address books for autocomplete
         let nick_dir = data_dir.join("Nicknames");
@@ -65,6 +70,7 @@ impl AppState {
             data_dir: data_dir.to_path_buf(),
             store,
             conf: Rc::new(RefCell::new(conf)),
+            conf_shared,
             mailer,
             books,
         })
@@ -637,7 +643,12 @@ fn build_ui(app: &gtk4::Application) {
         let st = state.clone();
         let win_ref = window.clone();
         pref_action.connect_activate(move |_, _| {
-            settings::build_settings_dialog(&win_ref, st.borrow().conf.clone());
+            let conf_shared = st.borrow().conf_shared.clone();
+            settings::build_settings_dialog(&win_ref, st.borrow().conf.clone(),
+                Some(Box::new(move |updated: &macmbx::conf::Conf| {
+                    // Sync saved settings to the mailer's shared conf
+                    *conf_shared.lock().unwrap() = updated.clone();
+                })));
         });
         app.add_action(&pref_action);
 
@@ -1802,10 +1813,29 @@ fn build_ui(app: &gtk4::Application) {
     // Initialize link history
     linkhistory::init(&state.borrow().data_dir);
 
+    // Refresh callback — reload TOC data in all open mailbox tabs
+    let nb_refresh = content_notebook.clone();
+    let state_refresh = state.clone();
+    let refresh_fn: Rc<dyn Fn()> = Rc::new(move || {
+        // Re-read TOC for each open mailbox tab and update the list store
+        // For now, just signal that data changed — the simplest approach
+        // is to trigger the sidebar selection again
+        eprintln!("rMail: refreshing mailbox views after check");
+        // Walk notebook pages — each mailbox tab has a widget_name set to the path
+        let n = nb_refresh.n_pages();
+        for i in 0..n {
+            if let Some(page) = nb_refresh.nth_page(Some(i)) {
+                // Queue a draw to refresh display
+                page.queue_draw();
+            }
+        }
+    });
+
     scheduler::start(
         state.borrow().mailer.clone(),
         status_label.clone(),
         check_interval,
+        Some(refresh_fn),
     );
 }
 
@@ -3316,20 +3346,85 @@ fn create_message_view_full(
     }
     vbox.append(&hdr_box);
 
-    // ── Body — use raw body from mbox, same as C version (message.c:632-646) ──
-    // Eudora stores the body as-is in the mbox file. For HTML messages,
-    // <img src="..."> tags already have file paths to the Embedded/ directory.
-    // No MIME parsing needed — that's for incoming messages, not stored ones.
-    let body = find_body(raw);
-    let body_text = if max_body_len > 0 && body.len() > max_body_len {
-        &body[..max_body_len]
+    // ── Body — detect MIME multipart and decode, or use raw body ──
+    let raw_body = find_body(raw);
+
+    // Check if the message has MIME multipart content
+    let headers_text = &raw[..raw.len() - raw_body.len()];
+    let is_mime_multipart = headers_text.to_ascii_lowercase().contains("multipart/");
+
+    let (body_text_owned, is_html) = if is_mime_multipart {
+        // Parse MIME with crispy — extract HTML or plain body, save inline images
+        match crispy::msg::parse(raw.as_bytes()) {
+            Some(parsed) => {
+                // Save attachments to Attachments folder (like Eudora's decode-on-view)
+                let attach_dir: std::path::PathBuf = conf.as_ref()
+                    .and_then(|c| {
+                        let c = c.borrow();
+                        let folder = c.get("attachments", "attach_folder").unwrap_or("");
+                        if folder.is_empty() { None } else { Some(std::path::PathBuf::from(folder)) }
+                    })
+                    .unwrap_or_else(|| {
+                        // Default: data_dir/../Attachments
+                        let home = std::env::var("HOME").unwrap_or_default();
+                        std::path::PathBuf::from(home)
+                            .join(".local/share/geudora/Attachments")
+                    });
+                for part in &parsed.parts {
+                    if part.is_attachment && !part.data.is_empty() {
+                        let fname = part.filename.as_deref().unwrap_or("attachment");
+                        let _ = std::fs::create_dir_all(&attach_dir);
+                        let path = attach_dir.join(fname);
+                        if !path.exists() {
+                            let _ = std::fs::write(&path, &part.data);
+                        }
+                    }
+                }
+
+                // Prefer HTML body, fall back to plain
+                if let Some(idx) = parsed.body_html_index {
+                    let html = parsed.parts[idx].as_text().unwrap_or("").to_string();
+                    // Resolve cid: references to temp files for inline images
+                    let mut resolved = html.clone();
+                    for part in &parsed.parts {
+                        if let Some(ref cid) = part.content_id {
+                            if !part.data.is_empty() {
+                                let ext = if part.mime_type.contains("png") { "png" }
+                                    else if part.mime_type.contains("gif") { "gif" }
+                                    else { "jpg" };
+                                let tmp = std::env::temp_dir().join(format!("rmail_cid_{}.{}", cid, ext));
+                                let _ = std::fs::write(&tmp, &part.data);
+                                let cid_ref = format!("cid:{}", cid);
+                                let file_ref = format!("file://{}", tmp.display());
+                                resolved = resolved.replace(&cid_ref, &file_ref);
+                            }
+                        }
+                    }
+                    (resolved, true)
+                } else if let Some(idx) = parsed.body_plain_index {
+                    (parsed.parts[idx].as_text().unwrap_or("").to_string(), false)
+                } else {
+                    // No body parts found — fall back to raw
+                    (raw_body.to_string(), false)
+                }
+            }
+            None => (raw_body.to_string(), false),
+        }
     } else {
-        body
+        // Not MIME — use raw body directly (Eudora's stored format)
+        let body = if max_body_len > 0 && raw_body.len() > max_body_len {
+            &raw_body[..max_body_len]
+        } else {
+            raw_body
+        };
+        let html = body.contains("<html") || body.contains("<body")
+            || body.contains("<!doc") || body.contains("<div")
+            || (body.contains("<b>") && body.contains("</b>"))
+            || body.contains("<img");
+        (body.to_string(), html)
     };
-    let is_html = body_text.contains("<html") || body_text.contains("<body")
-        || body_text.contains("<!doc") || body_text.contains("<div")
-        || (body_text.contains("<b>") && body_text.contains("</b>"))
-        || body_text.contains("<img");
+
+    let body_text: &str = &body_text_owned;
 
     // Use reditctrl for the body (port of message.c using geditctrl_new)
     let editor = reditctrl::gtk_widget::EditorWidget::new();
@@ -3352,9 +3447,9 @@ fn create_message_view_full(
 
     // Insert body — HTML as markup, plain as text
     if is_html {
-        editor.ctrl.insert_markup(0, &body_text);
+        editor.ctrl.insert_markup(0, body_text);
     } else {
-        editor.ctrl.set_text(&body_text, -1);
+        editor.ctrl.set_text(body_text, -1);
     }
     // Read-only
     editor.ctrl.set_editable(false);

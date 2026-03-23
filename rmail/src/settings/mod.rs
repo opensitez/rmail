@@ -240,13 +240,44 @@ fn render_panel(panel: &SettingsPanel, conf: &macmbx::conf::Conf, widgets: &Widg
                 append_to!(sep);
             }
             SettingsField::Text { section, key, label, placeholder } => {
+                let wk = widget_key(section, key);
                 let entry = gtk4::Entry::new();
                 entry.set_placeholder_text(Some(placeholder));
                 let val = conf.get(section, key).unwrap_or("");
                 entry.set_text(val);
                 let row = form_row(label, &entry);
                 append_to!(row);
-                widgets.borrow_mut().insert(widget_key(section, key), entry.upcast());
+
+                // If another panel already has a widget for this key, bind them
+                let map = widgets.borrow();
+                if let Some(existing) = map.get(&wk) {
+                    if let Some(other) = existing.downcast_ref::<gtk4::Entry>() {
+                        // Sync: when one changes, update the other
+                        let e2 = entry.clone();
+                        let syncing = Rc::new(std::cell::Cell::new(false));
+                        let s1 = syncing.clone();
+                        let s2 = syncing.clone();
+                        let other_clone = other.clone();
+                        e2.connect_changed(move |e| {
+                            if !s1.get() {
+                                s1.set(true);
+                                other_clone.set_text(&e.text());
+                                s1.set(false);
+                            }
+                        });
+                        let e2b = entry.clone();
+                        other.connect_changed(move |o| {
+                            if !s2.get() {
+                                s2.set(true);
+                                e2b.set_text(&o.text());
+                                s2.set(false);
+                            }
+                        });
+                    }
+                }
+                drop(map);
+                // Don't overwrite — keep the first widget as the sync source
+                widgets.borrow_mut().entry(wk).or_insert(entry.upcast());
             }
             SettingsField::Int { section, key, prefix, suffix, default, min, max } => {
                 let val = conf.get_int(section, key, *default as i64) as f64;
@@ -431,6 +462,7 @@ fn sync_panel_to_conf(panel: &SettingsPanel, conf: &mut macmbx::conf::Conf, widg
 pub fn build_settings_dialog(
     parent: &gtk4::ApplicationWindow,
     conf: Rc<RefCell<macmbx::conf::Conf>>,
+    on_save: Option<Box<dyn Fn(&macmbx::conf::Conf)>>,
 ) {
     let all_panels = panels::all_panels();
     let widgets: WidgetMap = Rc::new(RefCell::new(HashMap::new()));
@@ -551,6 +583,7 @@ pub fn build_settings_dialog(
         let d = dialog.clone();
         let wmap = widgets.clone();
         let conf_rc = conf.clone();
+        let on_save_rc: Rc<Option<Box<dyn Fn(&macmbx::conf::Conf)>>> = Rc::new(on_save);
         save_btn.connect_clicked(move |_| {
             let panels = panels::all_panels();
             let mut c = conf_rc.borrow_mut();
@@ -559,6 +592,10 @@ pub fn build_settings_dialog(
             }
             if let Err(e) = c.save() {
                 eprintln!("rMail: failed to save settings: {}", e);
+            }
+            // Notify caller to sync shared conf
+            if let Some(ref cb) = *on_save_rc {
+                cb(&c);
             }
             d.close();
         });

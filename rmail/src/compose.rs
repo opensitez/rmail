@@ -433,6 +433,7 @@ fn build_compose_tab_inner(conf: &Conf, prefill: Option<&ComposeData>, mailer: A
     attach_flow.set_max_children_per_line(20);
     attach_flow.set_hexpand(true);
     att_box.append(&attach_flow);
+    let att_flow_for_gather = attach_flow.clone();
 
     let add_att_btn = gtk4::Button::from_icon_name("list-add-symbolic");
     add_att_btn.add_css_class("flat");
@@ -484,20 +485,7 @@ fn build_compose_tab_inner(conf: &Conf, prefill: Option<&ComposeData>, mailer: A
             dlg.open(toplevel.as_ref(), gtk4::gio::Cancellable::NONE, move |result| {
                 if let Ok(file) = result {
                     if let Some(path) = file.path() {
-                        let name = path.file_name()
-                            .map(|n| n.to_string_lossy().to_string())
-                            .unwrap_or_else(|| path.to_string_lossy().to_string());
-                        let chip = gtk4::Box::new(gtk4::Orientation::Horizontal, 4);
-                        chip.append(&gtk4::Label::new(Some(&name)));
-                        let rm = gtk4::Button::from_icon_name("window-close-symbolic");
-                        rm.add_css_class("flat");
-                        let af3 = af2.clone();
-                        let cr = chip.clone();
-                        rm.connect_clicked(move |_| {
-                            if let Some(p) = cr.parent() { af3.remove(&p); }
-                        });
-                        chip.append(&rm);
-                        af2.append(&chip);
+                        add_attach_chip(&af2, &path);
                     }
                 }
             });
@@ -511,25 +499,14 @@ fn build_compose_tab_inner(conf: &Conf, prefill: Option<&ComposeData>, mailer: A
             dlg.open(toplevel.as_ref(), gtk4::gio::Cancellable::NONE, move |result| {
                 if let Ok(file) = result {
                     if let Some(path) = file.path() {
-                        let name = path.file_name()
-                            .map(|n| n.to_string_lossy().to_string())
-                            .unwrap_or_else(|| path.to_string_lossy().to_string());
-                        let chip = gtk4::Box::new(gtk4::Orientation::Horizontal, 4);
-                        chip.append(&gtk4::Label::new(Some(&name)));
-                        let rm = gtk4::Button::from_icon_name("window-close-symbolic");
-                        rm.add_css_class("flat");
-                        let af3 = af2.clone();
-                        let cr = chip.clone();
-                        rm.connect_clicked(move |_| {
-                            if let Some(p) = cr.parent() { af3.remove(&p); }
-                        });
-                        chip.append(&rm);
-                        af2.append(&chip);
+                        add_attach_chip(&af2, &path);
                     }
                 }
             });
         });
     }
+
+    // Insert Image — wired below after editor is created
 
     // ══════════════════════════════════════════════════════════
     // 4. Vertical paned: headers top, body bottom (comp.c:1278-1336)
@@ -617,6 +594,31 @@ fn build_compose_tab_inner(conf: &Conf, prefill: Option<&ComposeData>, mailer: A
                 }).collect()
             });
         }
+    }
+
+    // Insert Image — open file dialog, insert into editor body
+    {
+        let ed = editor_rc.clone();
+        img_btn.connect_clicked(move |btn| {
+            let dlg = gtk4::FileDialog::new();
+            dlg.set_title("Insert Image");
+            let filter = gtk4::FileFilter::new();
+            filter.add_mime_type("image/*");
+            filter.set_name(Some("Images"));
+            let toplevel = btn.root().and_then(|r| r.downcast::<gtk4::Window>().ok());
+            let ed2 = ed.clone();
+            dlg.open(toplevel.as_ref(), gtk4::gio::Cancellable::NONE, move |result| {
+                if let Ok(file) = result {
+                    if let Some(path) = file.path() {
+                        let url = format!("file://{}", path.display());
+                        let html = format!("<img src=\"{}\">", url);
+                        let pos = ed2.editor().get_caret_offset();
+                        ed2.editor().insert_markup(pos, &html);
+                        ed2.queue_draw();
+                    }
+                }
+            });
+        });
     }
 
     paned.set_end_child(Some(editor_rc.widget()));
@@ -916,6 +918,7 @@ fn build_compose_tab_inner(conf: &Conf, prefill: Option<&ComposeData>, mailer: A
         let cc = cc_entry.clone();
         let bcc = bcc_entry.clone();
         let ed = editor_rc.clone();
+        let att_flow = att_flow_for_gather.clone();
         Rc::new(move || -> Option<(crispy::msg::Message, String)> {
             let to_text = to.text().to_string();
             if to_text.is_empty() { return None; }
@@ -949,7 +952,7 @@ fn build_compose_tab_inner(conf: &Conf, prefill: Option<&ComposeData>, mailer: A
                 subject: subj.text().to_string(),
                 body_plain: Some(body_plain),
                 body_html: if has_html { Some(body_html_raw) } else { None },
-                attachments: Vec::new(),
+                attachments: collect_attachments(&att_flow),
                 message_id: None,
                 in_reply_to: None,
                 references: None,
@@ -966,15 +969,33 @@ fn build_compose_tab_inner(conf: &Conf, prefill: Option<&ComposeData>, mailer: A
         let gather = gather_message.clone();
         let m = mailer.clone();
         send_btn.connect_clicked(move |btn| {
-            if let Some((msg, from_bare)) = gather() {
-                if let Some(raw) = msg.build() {
-                    match m.queue(raw.as_bytes(), &from_bare, &[]) {
-                        Ok(_) => {
-                            crate::scheduler::request_send();
-                            // Close the compose tab (port of CompSend closing the window)
-                            close_parent_tab(btn);
+            let show_err = |btn: &gtk4::Button, msg: &str| {
+                if let Some(root) = btn.root() {
+                    if let Ok(win) = root.downcast::<gtk4::Window>() {
+                        let dlg = gtk4::AlertDialog::builder()
+                            .modal(true)
+                            .message("Send Failed")
+                            .detail(msg)
+                            .buttons(["OK"])
+                            .build();
+                        dlg.show(Some(&win));
+                    }
+                }
+            };
+            match gather() {
+                None => show_err(btn, "Please enter a recipient in the To field."),
+                Some((msg, from_bare)) => {
+                    match msg.build() {
+                        None => show_err(btn, "Cannot build message. Check that From and To are filled in."),
+                        Some(raw) => {
+                            match m.queue(raw.as_bytes(), &from_bare, &[]) {
+                                Ok(_) => {
+                                    crate::scheduler::request_send();
+                                    close_parent_tab(btn);
+                                }
+                                Err(e) => show_err(btn, &format!("Failed to queue message: {}", e)),
+                            }
                         }
-                        Err(e) => eprintln!("rMail: failed to queue: {}", e),
                     }
                 }
             }
@@ -986,29 +1007,64 @@ fn build_compose_tab_inner(conf: &Conf, prefill: Option<&ComposeData>, mailer: A
         let gather = gather_message.clone();
         let m = mailer.clone();
         queue_btn.connect_clicked(move |btn| {
-            if let Some((msg, from_bare)) = gather() {
-                if let Some(raw) = msg.build() {
-                    match m.queue(raw.as_bytes(), &from_bare, &[]) {
-                        Ok(_) => close_parent_tab(btn),
-                        Err(e) => eprintln!("rMail: failed to queue: {}", e),
+            let show_err = |btn: &gtk4::Button, msg: &str| {
+                if let Some(root) = btn.root() {
+                    if let Ok(win) = root.downcast::<gtk4::Window>() {
+                        let dlg = gtk4::AlertDialog::builder()
+                            .modal(true).message("Queue Failed").detail(msg)
+                            .buttons(["OK"]).build();
+                        dlg.show(Some(&win));
+                    }
+                }
+            };
+            match gather() {
+                None => show_err(btn, "Please enter a recipient in the To field."),
+                Some((msg, from_bare)) => {
+                    match msg.build() {
+                        None => show_err(btn, "Cannot build message. Check that From and To are filled in."),
+                        Some(raw) => {
+                            match m.queue(raw.as_bytes(), &from_bare, &[]) {
+                                Ok(_) => close_parent_tab(btn),
+                                Err(e) => show_err(btn, &format!("Failed to queue: {}", e)),
+                            }
+                        }
                     }
                 }
             }
         });
     }
 
-    // Save draft — queue with Unsendable state
+    // Save draft — like original Eudora CompSave:
+    // First save allocates a slot (queue), subsequent saves update in-place.
     {
         let gather = gather_message.clone();
         let m = mailer.clone();
-        save_btn.connect_clicked(move |_| {
+        let draft_idx: Rc<std::cell::Cell<Option<usize>>> = Rc::new(std::cell::Cell::new(None));
+        save_btn.connect_clicked(move |btn| {
             if let Some((msg, from_bare)) = gather() {
                 if let Some(raw) = msg.build() {
-                    // Queue saves to Out — the message will be in Queued state
-                    // For draft, we'd want Unsendable but queue() uses Queued.
-                    // This matches the C behavior where Save writes to Out.
-                    match m.queue(raw.as_bytes(), &from_bare, &[]) {
-                        Ok(_) => eprintln!("rMail: draft saved to Out"),
+                    let result = if let Some(idx) = draft_idx.get() {
+                        // Update existing slot (like WriteComp + UpdateSum)
+                        m.update_queued(idx, raw.as_bytes(), &from_bare).map(|_| idx)
+                    } else {
+                        // First save — allocate new slot
+                        m.queue(raw.as_bytes(), &from_bare, &[])
+                    };
+                    match result {
+                        Ok(idx) => {
+                            draft_idx.set(Some(idx));
+                            // Show "[Saved]" in title like original Eudora
+                            if let Some(root) = btn.root() {
+                                if let Ok(win) = root.downcast::<gtk4::Window>() {
+                                    if let Some(title) = win.title() {
+                                        let t = title.to_string();
+                                        if !t.ends_with(" [Saved]") {
+                                            win.set_title(Some(&format!("{} [Saved]", t)));
+                                        }
+                                    }
+                                }
+                            }
+                        }
                         Err(e) => eprintln!("rMail: failed to save draft: {}", e),
                     }
                 }
@@ -1020,6 +1076,50 @@ fn build_compose_tab_inner(conf: &Conf, prefill: Option<&ComposeData>, mailer: A
 }
 
 /// Close the notebook tab containing this widget (port of CompSend/CompQueue closing the window).
+/// Add an attachment chip to the flow box, storing the full path in widget_name.
+fn add_attach_chip(flow: &gtk4::FlowBox, path: &std::path::Path) {
+    let name = path.file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| path.to_string_lossy().to_string());
+    let chip = gtk4::Box::new(gtk4::Orientation::Horizontal, 4);
+    // Store full path for gather_message to read
+    chip.set_widget_name(&path.to_string_lossy());
+    let icon = gtk4::Image::from_icon_name("mail-attachment-symbolic");
+    icon.set_pixel_size(14);
+    chip.append(&icon);
+    chip.append(&gtk4::Label::new(Some(&name)));
+    let rm = gtk4::Button::from_icon_name("window-close-symbolic");
+    rm.add_css_class("flat");
+    rm.set_has_frame(false);
+    let flow_ref = flow.clone();
+    let cr = chip.clone();
+    rm.connect_clicked(move |_| {
+        if let Some(p) = cr.parent() { flow_ref.remove(&p); }
+    });
+    chip.append(&rm);
+    flow.append(&chip);
+}
+
+/// Collect attachment paths from the flow box chips.
+fn collect_attachments(flow: &gtk4::FlowBox) -> Vec<crispy::msg::Attachment> {
+    let mut attachments = Vec::new();
+    let mut child = flow.first_child();
+    while let Some(c) = child {
+        // FlowBox wraps in FlowBoxChild
+        if let Some(inner) = c.first_child() {
+            let path_str = inner.widget_name().to_string();
+            if !path_str.is_empty() && path_str != "GtkBox" {
+                attachments.push(crispy::msg::Attachment {
+                    path: Some(path_str),
+                    ..Default::default()
+                });
+            }
+        }
+        child = c.next_sibling();
+    }
+    attachments
+}
+
 fn close_parent_tab(widget: &gtk4::Button) {
     // Walk up from the button to find the Notebook, then remove the page containing us
     let mut w: Option<gtk4::Widget> = Some(widget.clone().upcast());

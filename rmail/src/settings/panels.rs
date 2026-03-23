@@ -326,6 +326,7 @@ fn attachments() -> SettingsPanel {
 
             SettingsField::GroupStart { label: "Storage" },
             SettingsField::Text { section: "attachments", key: "attach_folder", label: "Attachment Folder", placeholder: "" },
+            SettingsField::Bool { section: "attachments", key: "auto_save_attachments", label: "Save attachments to disk on receive", default: false },
             SettingsField::Bool { section: "attachments", key: "trash_attachments_with_msg", label: "Trash attachments with message", default: false },
             SettingsField::Bool { section: "attachments", key: "receive_digests_as_attach", label: "Receive digests as attachments", default: false },
             SettingsField::GroupEnd,

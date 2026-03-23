@@ -10,7 +10,7 @@ use macmbx::conf::Conf;
 use macmbx::mailer::*;
 use macmbx::toc::MailboxType;
 use std::cell::RefCell;
-use std::io;
+use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}};
@@ -54,6 +54,382 @@ impl StoreProvider for RealStore {
     }
     fn base_path(&self) -> &Path { &self.0 }
     fn root_path(&self) -> &Path { &self.0 }
+}
+
+// ── native-tls connector for crispy ──
+
+struct NativeTlsConnector;
+
+impl crispy::transport::TlsConnector for NativeTlsConnector {
+    fn connect(
+        &self,
+        domain: &str,
+        stream: std::net::TcpStream,
+        trusted_pem: Option<&str>,
+    ) -> Result<Box<dyn crispy::transport::TlsStream>, crispy::transport::TlsError> {
+        let mut builder = native_tls::TlsConnector::builder();
+
+        // If trusted_pem set OR host was previously accepted, skip verification
+        if trusted_pem.is_some() || is_host_accepted(domain) {
+            builder.danger_accept_invalid_certs(true);
+        }
+
+        let connector = builder.build()
+            .map_err(|e| crispy::transport::TlsError {
+                message: e.to_string(),
+                cert_pem: None,
+            })?;
+
+        match connector.connect(domain, stream) {
+            Ok(tls_stream) => Ok(Box::new(NativeTlsStream(tls_stream))),
+            Err(e) => {
+                Err(crispy::transport::TlsError {
+                    message: e.to_string(),
+                    // Return a placeholder so crispy's cert_callback fires
+                    cert_pem: Some("ACCEPTED".to_string()),
+                })
+            }
+        }
+    }
+}
+
+struct NativeTlsStream(native_tls::TlsStream<std::net::TcpStream>);
+unsafe impl Send for NativeTlsStream {}
+
+impl std::io::Read for NativeTlsStream {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> { self.0.read(buf) }
+}
+impl std::io::Write for NativeTlsStream {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> { self.0.write(buf) }
+    fn flush(&mut self) -> io::Result<()> { self.0.flush() }
+}
+impl crispy::transport::TlsStream for NativeTlsStream {
+    fn tcp_stream(&self) -> Option<&std::net::TcpStream> {
+        self.0.get_ref().into()
+    }
+}
+
+/// Cert prompt result — matches the C enum.
+#[derive(Clone, Copy, PartialEq)]
+enum CertResponse { Reject, AcceptOnce, AcceptAlways }
+
+/// Block background thread, show cert dialog on main thread, return user choice.
+fn prompt_cert(host: &str, error: &str) -> CertResponse {
+    let response = Arc::new((Mutex::new(None::<CertResponse>),
+                              std::sync::Condvar::new()));
+    let r = response.clone();
+    let host_s = host.to_string();
+    let error_s = error.to_string();
+
+    glib::idle_add_once(move || {
+        let dlg = gtk4::Window::new();
+        dlg.set_title(Some("SSL Certificate Warning"));
+        dlg.set_modal(true);
+        dlg.set_default_size(480, -1);
+        dlg.set_resizable(false);
+
+        let vbox = gtk4::Box::new(gtk4::Orientation::Vertical, 8);
+        vbox.set_margin_start(20);
+        vbox.set_margin_end(20);
+        vbox.set_margin_top(16);
+        vbox.set_margin_bottom(16);
+        dlg.set_child(Some(&vbox));
+
+        let title = gtk4::Label::new(None);
+        title.set_markup("<b><span size='large'>Untrusted SSL Certificate</span></b>");
+        title.set_halign(gtk4::Align::Start);
+        vbox.append(&title);
+
+        let info_text = format!(
+            "The server <b>{}</b> presented a certificate that could not be verified.\n\n\
+             <b>Error:</b> {}", host_s, error_s);
+        let info = gtk4::Label::new(None);
+        info.set_markup(&info_text);
+        info.set_halign(gtk4::Align::Start);
+        info.set_wrap(true);
+        info.set_selectable(true);
+        vbox.append(&info);
+
+        vbox.append(&gtk4::Separator::new(gtk4::Orientation::Horizontal));
+
+        let btn_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+        btn_box.set_halign(gtk4::Align::End);
+        btn_box.set_margin_top(8);
+
+        let reject_btn = gtk4::Button::with_label("Reject");
+        let once_btn = gtk4::Button::with_label("Accept Once");
+        let always_btn = gtk4::Button::with_label("Accept Always");
+        // Only highlight the suggested action, keep others plain
+        always_btn.add_css_class("suggested-action");
+
+        btn_box.append(&reject_btn);
+        btn_box.append(&once_btn);
+        btn_box.append(&always_btn);
+        vbox.append(&btn_box);
+
+        let respond = {
+            let r = r.clone();
+            let dlg = dlg.clone();
+            move |resp: CertResponse| {
+                let (lock, cvar) = &*r;
+                let mut guard = lock.lock().unwrap();
+                // Only set if not already responded (button click before close_request)
+                if guard.is_none() {
+                    *guard = Some(resp);
+                    cvar.notify_one();
+                }
+                drop(guard);
+                dlg.close();
+            }
+        };
+
+        let resp_reject = respond.clone();
+        reject_btn.connect_clicked(move |_| resp_reject(CertResponse::Reject));
+        let resp_once = respond.clone();
+        once_btn.connect_clicked(move |_| resp_once(CertResponse::AcceptOnce));
+        let resp_always = respond.clone();
+        always_btn.connect_clicked(move |_| resp_always(CertResponse::AcceptAlways));
+
+        let r_close = r.clone();
+        dlg.connect_close_request(move |_| {
+            let (lock, cvar) = &*r_close;
+            let mut guard = lock.lock().unwrap();
+            if guard.is_none() {
+                *guard = Some(CertResponse::Reject);
+                cvar.notify_one();
+            }
+            glib::Propagation::Proceed
+        });
+
+        dlg.present();
+    });
+
+    // Block background thread until user responds
+    let (lock, cvar) = &*response;
+    let mut guard = lock.lock().unwrap();
+    while guard.is_none() {
+        guard = cvar.wait(guard).unwrap();
+    }
+    guard.unwrap()
+}
+
+/// Passwords that were tried and failed (cleared after successful check).
+static BAD_PASSWORDS: Mutex<Option<std::collections::HashSet<String>>> = Mutex::new(None);
+
+fn is_password_bad(key: &str) -> bool {
+    let lock = BAD_PASSWORDS.lock().unwrap();
+    lock.as_ref().map_or(false, |s| s.contains(key))
+}
+
+fn mark_password_bad(key: &str) {
+    let mut lock = BAD_PASSWORDS.lock().unwrap();
+    if lock.is_none() { *lock = Some(std::collections::HashSet::new()); }
+    lock.as_mut().unwrap().insert(key.to_string());
+}
+
+fn clear_bad_passwords() {
+    let mut lock = BAD_PASSWORDS.lock().unwrap();
+    if let Some(ref mut s) = *lock { s.clear(); }
+}
+
+/// Thread-local task ID for progress reporting from check_account threads.
+thread_local! {
+    static CURRENT_TASK_ID: std::cell::Cell<i32> = const { std::cell::Cell::new(-1) };
+}
+
+/// Hosts the user has accepted certs for this session only (Accept Once).
+static ACCEPTED_ONCE: Mutex<Option<std::collections::HashSet<String>>> = Mutex::new(None);
+/// Hosts the user has permanently accepted certs for (Accept Always — persisted).
+static ACCEPTED_ALWAYS: Mutex<Option<std::collections::HashSet<String>>> = Mutex::new(None);
+
+fn is_host_accepted(host: &str) -> bool {
+    let once = ACCEPTED_ONCE.lock().unwrap();
+    if once.as_ref().map_or(false, |s| s.contains(host)) { return true; }
+    let always = ACCEPTED_ALWAYS.lock().unwrap();
+    always.as_ref().map_or(false, |s| s.contains(host))
+}
+
+fn accept_host_once(host: &str) {
+    let mut lock = ACCEPTED_ONCE.lock().unwrap();
+    if lock.is_none() { *lock = Some(std::collections::HashSet::new()); }
+    lock.as_mut().unwrap().insert(host.to_string());
+}
+
+fn accept_host_always(host: &str) {
+    let mut lock = ACCEPTED_ALWAYS.lock().unwrap();
+    if lock.is_none() { *lock = Some(std::collections::HashSet::new()); }
+    lock.as_mut().unwrap().insert(host.to_string());
+    // Persist to disk
+    let dir = std::env::var("XDG_DATA_HOME")
+        .unwrap_or_else(|_| {
+            let home = std::env::var("HOME").unwrap_or_default();
+            format!("{}/.local/share", home)
+        });
+    let path = PathBuf::from(dir).join("geudora").join("trusted_certs.txt");
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        let _ = writeln!(f, "{}", host);
+    }
+}
+
+/// Load permanently accepted hosts from disk on startup.
+pub fn load_trusted_hosts() {
+    let dir = std::env::var("XDG_DATA_HOME")
+        .unwrap_or_else(|_| {
+            let home = std::env::var("HOME").unwrap_or_default();
+            format!("{}/.local/share", home)
+        });
+    let path = PathBuf::from(dir).join("geudora").join("trusted_certs.txt");
+    if let Ok(data) = std::fs::read_to_string(&path) {
+        let mut lock = ACCEPTED_ALWAYS.lock().unwrap();
+        if lock.is_none() { *lock = Some(std::collections::HashSet::new()); }
+        let set = lock.as_mut().unwrap();
+        for line in data.lines() {
+            let h = line.trim();
+            if !h.is_empty() { set.insert(h.to_string()); }
+        }
+    }
+}
+
+/// Block background thread, show password dialog on main thread, return password.
+fn prompt_password(user: &str, server: &str) -> Option<String> {
+    let response: Arc<(Mutex<Option<Option<String>>>, std::sync::Condvar)> =
+        Arc::new((Mutex::new(None), std::sync::Condvar::new()));
+    let r = response.clone();
+    let user_s = user.to_string();
+    let server_s = server.to_string();
+
+    glib::idle_add_once(move || {
+        let dlg = gtk4::Window::new();
+        dlg.set_title(Some("Password Required"));
+        dlg.set_modal(true);
+        dlg.set_default_size(400, -1);
+        dlg.set_resizable(false);
+
+        let vbox = gtk4::Box::new(gtk4::Orientation::Vertical, 8);
+        vbox.set_margin_start(20);
+        vbox.set_margin_end(20);
+        vbox.set_margin_top(16);
+        vbox.set_margin_bottom(16);
+        dlg.set_child(Some(&vbox));
+
+        let label = gtk4::Label::new(None);
+        label.set_markup(&format!(
+            "Enter password for <b>{}</b> on <b>{}</b>:", user_s, server_s));
+        label.set_halign(gtk4::Align::Start);
+        label.set_wrap(true);
+        vbox.append(&label);
+
+        let entry = gtk4::PasswordEntry::new();
+        entry.set_show_peek_icon(true);
+        vbox.append(&entry);
+
+        let save_check = gtk4::CheckButton::with_label("Save to Keychain");
+        save_check.set_active(true);
+        vbox.append(&save_check);
+
+        let btn_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+        btn_box.set_halign(gtk4::Align::End);
+        btn_box.set_margin_top(8);
+        let cancel_btn = gtk4::Button::with_label("Cancel");
+        let ok_btn = gtk4::Button::with_label("OK");
+        ok_btn.add_css_class("suggested-action");
+        btn_box.append(&cancel_btn);
+        btn_box.append(&ok_btn);
+        vbox.append(&btn_box);
+
+        let respond = {
+            let r = r.clone();
+            let dlg = dlg.clone();
+            move |pw: Option<String>| {
+                let (lock, cvar) = &*r;
+                let mut guard = lock.lock().unwrap();
+                if guard.is_none() {
+                    *guard = Some(pw);
+                    cvar.notify_one();
+                }
+                drop(guard);
+                dlg.close();
+            }
+        };
+
+        let resp_ok = respond.clone();
+        let entry_ok = entry.clone();
+        let save_ok = save_check.clone();
+        let user_ok = user_s.clone();
+        let server_ok = server_s.clone();
+        ok_btn.connect_clicked(move |_| {
+            let pw = entry_ok.text().to_string();
+            if !pw.is_empty() {
+                // Save to keychain if checked
+                #[cfg(target_os = "macos")]
+                if save_ok.is_active() {
+                    use security_framework::passwords::set_generic_password;
+                    let key = format!("{}@{}", user_ok, server_ok);
+                    let _ = set_generic_password("gEudora", &key, pw.as_bytes());
+                }
+                resp_ok(Some(pw));
+            } else {
+                resp_ok(None);
+            }
+        });
+
+        let resp_cancel = respond.clone();
+        cancel_btn.connect_clicked(move |_| resp_cancel(None));
+
+        let resp_enter = respond.clone();
+        let entry_enter = entry.clone();
+        entry_enter.connect_activate(move |e| {
+            let pw = e.text().to_string();
+            if !pw.is_empty() {
+                resp_enter(Some(pw));
+            }
+        });
+
+        let r_close = r.clone();
+        dlg.connect_close_request(move |_| {
+            let (lock, cvar) = &*r_close;
+            let mut guard = lock.lock().unwrap();
+            if guard.is_none() {
+                *guard = Some(None);
+                cvar.notify_one();
+            }
+            glib::Propagation::Proceed
+        });
+
+        dlg.present();
+        entry.grab_focus();
+    });
+
+    // Block background thread until user responds
+    let (lock, cvar) = &*response;
+    let mut guard = lock.lock().unwrap();
+    while guard.is_none() {
+        guard = cvar.wait(guard).unwrap();
+    }
+    guard.clone().flatten()
+}
+
+fn new_transport() -> crispy::transport::TcpTransport {
+    let mut t = crispy::transport::TcpTransport::new();
+    t.set_tls_connector(Box::new(NativeTlsConnector));
+    // Prompt user on cert errors — blocks thread until dialog is answered
+    t.set_cert_callback(Box::new(|host: &str, error: &str, _pem: &str| -> bool {
+        eprintln!("cert_callback FIRED for host={} error={}", host, error);
+        // Already accepted?
+        if is_host_accepted(host) {
+            eprintln!("cert_callback: host already accepted");
+            return true;
+        }
+        let response = prompt_cert(host, error);
+        eprintln!("cert_callback: user response = {:?}", response as i32);
+        match response {
+            CertResponse::AcceptOnce => { accept_host_once(host); true }
+            CertResponse::AcceptAlways => { accept_host_always(host); true }
+            CertResponse::Reject => false,
+        }
+    }));
+    // If host was previously accepted, pre-set trusted_pem
+    t
 }
 
 // ── Crispy wrappers ──
@@ -147,15 +523,15 @@ struct CrispyFactory;
 impl SessionFactory for CrispyFactory {
     fn create_smtp(&self) -> Box<dyn SmtpClient> {
         Box::new(CrispySmtp(crispy::smtp::SmtpSession::new(
-            crispy::transport::TcpTransport::new(), "localhost")))
+            new_transport(), "localhost")))
     }
     fn create_pop3(&self) -> Box<dyn Pop3Client> {
         Box::new(CrispyPop3(crispy::pop3::Pop3Session::new(
-            crispy::transport::TcpTransport::new())))
+            new_transport())))
     }
     fn create_imap(&self) -> Box<dyn ImapClient> {
         Box::new(CrispyImap(crispy::imap::ImapSession::new(
-            crispy::transport::TcpTransport::new())))
+            new_transport())))
     }
 }
 
@@ -166,18 +542,24 @@ static NEED_CHECK: AtomicBool = AtomicBool::new(false);
 static NEED_SEND: AtomicBool = AtomicBool::new(false);
 static CHECK_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
 static SEND_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
+/// Set after check/send completes with changes — UI should refresh mailbox views.
+static NEED_REFRESH: AtomicBool = AtomicBool::new(false);
 
 pub fn is_offline() -> bool { OFFLINE.load(Ordering::Relaxed) }
 pub fn set_offline(offline: bool) { OFFLINE.store(offline, Ordering::Relaxed); }
 pub fn request_check() { if !is_offline() { NEED_CHECK.store(true, Ordering::Relaxed); } }
 pub fn request_send() { if !is_offline() { NEED_SEND.store(true, Ordering::Relaxed); } }
+/// Returns true (once) if mailbox views need refresh after check/send.
+pub fn take_need_refresh() -> bool { NEED_REFRESH.swap(false, Ordering::Relaxed) }
 
 /// Create a Mailer — public so AppState can hold it.
 /// Sets up the keychain credential callback so the Mailer can
 /// get passwords without the GUI needing to know about them.
-pub fn create_mailer_from_conf(conf: &Conf, mb_dir: &Path) -> Mailer {
+/// Takes a shared conf so settings changes are visible to the mailer.
+pub fn create_mailer_from_conf(conf: Arc<Mutex<Conf>>, mb_dir: &Path) -> Mailer {
+    load_trusted_hosts();
     let mut mailer = Mailer::new(
-        Box::new(RealConf(Arc::new(Mutex::new(conf.clone())))),
+        Box::new(RealConf(conf)),
         Box::new(RealStore(mb_dir.to_path_buf())),
         Box::new(CrispyFactory),
     );
@@ -185,13 +567,43 @@ pub fn create_mailer_from_conf(conf: &Conf, mb_dir: &Path) -> Mailer {
     // Credential callback — macOS keychain lookup.
     // The Mailer calls this when it needs a password and doesn't have
     // one cached in conf. Passwords stay in macmbx, never in the GUI.
-    #[cfg(target_os = "macos")]
     mailer.set_credentials(Box::new(|user: &str, server: &str| -> Option<String> {
-        use security_framework::passwords::get_generic_password;
         let key = format!("{}@{}", user, server);
-        match get_generic_password("gEudora", &key) {
-            Ok(pw_bytes) => String::from_utf8(pw_bytes).ok(),
-            Err(_) => None,
+
+        // If this key was already tried (auth failed), skip keychain and prompt
+        if is_password_bad(&key) {
+            #[cfg(target_os = "macos")]
+            {
+                use security_framework::passwords::delete_generic_password;
+                let _ = delete_generic_password("gEudora", &key);
+            }
+            return prompt_password(user, server);
+        }
+
+        // Try keychain first (macOS)
+        #[cfg(target_os = "macos")]
+        {
+            use security_framework::passwords::get_generic_password;
+            if let Ok(pw_bytes) = get_generic_password("gEudora", &key) {
+                if let Ok(pw) = String::from_utf8(pw_bytes) {
+                    // Mark as tried — if auth fails and cred_fn is called again,
+                    // we'll know this password was bad
+                    mark_password_bad(&key);
+                    return Some(pw);
+                }
+            }
+        }
+
+        // Keychain failed or not on macOS — prompt user
+        prompt_password(user, server)
+    }));
+
+    // Progress callback — routes per-message progress to the task panel
+    mailer.set_progress(Box::new(|status: &str, current: i32, total: i32| {
+        let task_id = CURRENT_TASK_ID.with(|c| c.get());
+        if task_id >= 0 {
+            let progress = if total > 0 { current as f64 / total as f64 } else { -1.0 };
+            crate::tasks::update_detailed_task(task_id, status, progress);
         }
     }));
 
@@ -249,7 +661,12 @@ static STICKY_ERROR: Mutex<Option<String>> = Mutex::new(None);
 /// Start the scheduler tick (port of IdleSchedulerStart).
 /// Takes the shared Mailer from AppState — same instance used by compose.
 /// `check_interval_mins` is from conf checking_mail.check_interval (0 = no auto-check).
-pub fn start(mailer: std::sync::Arc<Mailer>, status_label: gtk4::Label, check_interval_mins: i32) {
+pub fn start(
+    mailer: std::sync::Arc<Mailer>,
+    status_label: gtk4::Label,
+    check_interval_mins: i32,
+    on_refresh: Option<Rc<dyn Fn()>>,
+) {
     // Auto-check counter — counts 500ms ticks
     let auto_check_ticks = if check_interval_mins > 0 {
         (check_interval_mins as u64) * 60 * 2 // ticks per interval (500ms each)
@@ -268,6 +685,13 @@ pub fn start(mailer: std::sync::Arc<Mailer>, status_label: gtk4::Label, check_in
                         status_label.set_text(err);
                     }
                 }
+            }
+        }
+
+        // Refresh mailbox views if background thread signaled
+        if NEED_REFRESH.swap(false, Ordering::Relaxed) {
+            if let Some(ref cb) = on_refresh {
+                cb();
             }
         }
 
@@ -293,10 +717,12 @@ pub fn start(mailer: std::sync::Arc<Mailer>, status_label: gtk4::Label, check_in
             for i in 0..acct_count {
                 if let Some(acct) = m.get_account_info(i) {
                     if acct.enabled && !acct.server.is_empty() {
-                        let desc = format!("Checking {} ({})...",
-                            if acct.name.is_empty() { &acct.email } else { &acct.name },
-                            acct.server);
-                        let tid = crate::tasks::add_task("mail-inbox-symbolic", &desc);
+                        let name = if acct.name.is_empty() { acct.email.clone() } else { acct.name.clone() };
+                        let tid = crate::tasks::add_detailed_task(
+                            "mail-inbox-symbolic",
+                            &name,
+                            &format!("Connecting to {}...", acct.server),
+                        );
                         task_ids.push((i, tid));
                     }
                 }
@@ -327,18 +753,21 @@ pub fn start(mailer: std::sync::Arc<Mailer>, status_label: gtk4::Label, check_in
                             let mailer_ref = &m;
                             let failed = failed_ids.clone();
                             s.spawn(move || {
+                                // Set thread-local so progress callback routes here
+                                CURRENT_TASK_ID.with(|c| c.set(task_id));
                                 let result = mailer_ref.check_account(acct_idx);
                                 match &result {
                                     Ok(n) if *n > 0 => {
-                                        crate::tasks::update_task(task_id,
-                                            &format!("Done — {} message(s)", n));
+                                        crate::tasks::update_detailed_task(task_id,
+                                            &format!("Done — {} new message(s)", n), 1.0);
                                     }
                                     Ok(_) => {
-                                        crate::tasks::update_task(task_id, "No new mail");
+                                        crate::tasks::update_detailed_task(task_id,
+                                            "No new mail", 1.0);
                                     }
                                     Err(e) => {
                                         let msg = format!("Failed: {}", e);
-                                        crate::tasks::update_task(task_id, &msg);
+                                        crate::tasks::update_detailed_task(task_id, &msg, 1.0);
                                         failed.lock().unwrap().push((task_id, msg));
                                     }
                                 }
@@ -377,10 +806,15 @@ pub fn start(mailer: std::sync::Arc<Mailer>, status_label: gtk4::Label, check_in
                 }
 
                 CHECK_IN_PROGRESS.store(false, Ordering::Relaxed);
+                clear_bad_passwords();
                 let msg = if total > 0 {
                     *STICKY_ERROR.lock().unwrap() = None;
-                    crate::tasks::add_task("mail-unread-symbolic",
+                    NEED_REFRESH.store(true, Ordering::Relaxed);
+                    let summary_id = crate::tasks::add_task("mail-unread-symbolic",
                         &format!("{} new message(s)", total));
+                    // Auto-remove summary after 5 seconds
+                    std::thread::sleep(std::time::Duration::from_secs(5));
+                    crate::tasks::remove_task(summary_id);
                     format!("{} new message(s)", total)
                 } else {
                     *STICKY_ERROR.lock().unwrap() = None;
@@ -394,24 +828,42 @@ pub fn start(mailer: std::sync::Arc<Mailer>, status_label: gtk4::Label, check_in
             NEED_SEND.store(false, Ordering::Relaxed);
             SEND_IN_PROGRESS.store(true, Ordering::Relaxed);
             status_label.set_text("Sending mail...");
-            let task_id = crate::tasks::add_task("mail-send-symbolic", "Sending mail...");
+            let task_id = crate::tasks::add_task("mail-send-symbolic", "Sending queued mail...");
             let m = mailer.clone();
             std::thread::spawn(move || {
                 let result = m.send();
+                match &result {
+                    Ok(n) if *n > 0 => {
+                        crate::tasks::update_task(task_id, &format!("{} message(s) sent", n));
+                    }
+                    Ok(_) => {
+                        crate::tasks::update_task(task_id, "No queued messages");
+                    }
+                    Err(e) => {
+                        crate::tasks::update_task(task_id, &format!("Send failed: {}", e));
+                    }
+                }
+
+                // Keep visible briefly
+                std::thread::sleep(std::time::Duration::from_secs(2));
+
                 SEND_IN_PROGRESS.store(false, Ordering::Relaxed);
-                crate::tasks::remove_task(task_id);
                 let msg = match &result {
                     Ok(n) if *n > 0 => {
                         *STICKY_ERROR.lock().unwrap() = None;
+                        crate::tasks::remove_task(task_id);
                         format!("{} message(s) sent", n)
                     }
                     Ok(_) => {
                         *STICKY_ERROR.lock().unwrap() = None;
+                        crate::tasks::remove_task(task_id);
                         "Send complete".to_string()
                     }
                     Err(e) => {
+                        // Convert to sticky error
                         let err = format!("Send failed: {}", e);
                         *STICKY_ERROR.lock().unwrap() = Some(err.clone());
+                        crate::tasks::remove_task(task_id);
                         crate::tasks::add_error("dialog-error-symbolic", &err);
                         err
                     }
