@@ -1,0 +1,14 @@
+[package]
+name = "crispy"
+version = "0.1.0"
+edition = "2021"
+description = "Standalone mail protocol library — SMTP, POP3, IMAP, MIME, RFC822"
+license = "BSD-3-Clause"
+
+[lib]
+name = "crispy"
+crate-type = ["lib", "staticlib"]
+
+[dependencies]
+
+[dev-dependencies]
