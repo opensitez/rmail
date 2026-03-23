@@ -943,6 +943,15 @@ fn build_compose_tab_inner(conf: &Conf, prefill: Option<&ComposeData>, mailer: A
             let has_html = body_html_raw.contains("<b>") || body_html_raw.contains("<i>")
                 || body_html_raw.contains("<img") || body_html_raw.contains("color")
                 || body_html_raw.contains("<font") || body_html_raw.contains("<u>");
+
+            // Convert file:// image refs to inline cid: attachments
+            let mut attachments = collect_attachments(&att_flow);
+            let body_html = if has_html {
+                Some(convert_inline_images(&body_html_raw, &mut attachments))
+            } else {
+                None
+            };
+
             let msg = crispy::msg::Message {
                 from: from_text.clone(),
                 to: to_text,
@@ -951,8 +960,8 @@ fn build_compose_tab_inner(conf: &Conf, prefill: Option<&ComposeData>, mailer: A
                 reply_to: None,
                 subject: subj.text().to_string(),
                 body_plain: Some(body_plain),
-                body_html: if has_html { Some(body_html_raw) } else { None },
-                attachments: collect_attachments(&att_flow),
+                body_html,
+                attachments,
                 message_id: None,
                 in_reply_to: None,
                 references: None,
@@ -1076,6 +1085,53 @@ fn build_compose_tab_inner(conf: &Conf, prefill: Option<&ComposeData>, mailer: A
 }
 
 /// Close the notebook tab containing this widget (port of CompSend/CompQueue closing the window).
+/// Scan HTML for <img src="file://..."> and convert to cid: inline attachments.
+/// Returns the modified HTML. Adds inline Attachment entries to the vec.
+fn convert_inline_images(html: &str, attachments: &mut Vec<crispy::msg::Attachment>) -> String {
+    let mut result = html.to_string();
+    let mut cid_counter = 0u32;
+
+    // Find all file:// image sources
+    let mut search_from = 0;
+    loop {
+        let lower = result[search_from..].to_ascii_lowercase();
+        let img_pos = match lower.find("src=\"file://") {
+            Some(p) => search_from + p,
+            None => break,
+        };
+        let url_start = img_pos + 5; // skip src="
+        let url_end = match result[url_start..].find('"') {
+            Some(p) => url_start + p,
+            None => break,
+        };
+        let file_url = &result[url_start..url_end];
+        let file_path = file_url.strip_prefix("file://").unwrap_or(file_url);
+
+        // Read the file
+        let path = std::path::Path::new(file_path);
+        if let Ok(data) = std::fs::read(path) {
+            cid_counter += 1;
+            let filename = path.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| format!("image{}", cid_counter));
+            let cid = format!("img{:04}@rmail", cid_counter);
+
+            // Add as inline attachment
+            attachments.push(crispy::msg::Attachment::inline_from_data(
+                data, &filename, &cid,
+            ));
+
+            // Replace file:// URL with cid:
+            let cid_url = format!("cid:{}", cid);
+            result = format!("{}{}{}", &result[..url_start], cid_url, &result[url_end..]);
+            search_from = url_start + cid_url.len() + 1;
+        } else {
+            search_from = url_end + 1;
+        }
+    }
+    result
+}
+
 /// Add an attachment chip to the flow box, storing the full path in widget_name.
 fn add_attach_chip(flow: &gtk4::FlowBox, path: &std::path::Path) {
     let name = path.file_name()

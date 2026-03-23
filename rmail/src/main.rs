@@ -42,10 +42,25 @@ impl AppState {
         let mailboxes_dir = data_dir.join("mailboxes");
         let config_path = data_dir.join("geudora.ini");
 
+        // Ensure data + mailboxes directories exist
+        std::fs::create_dir_all(&mailboxes_dir)?;
+
+        // Ensure special mailbox files exist (like original Eudora mbwin.c:110-121)
+        for name in &["In", "Out", "Trash", "Junk", "Drafts"] {
+            let path = mailboxes_dir.join(name);
+            if !path.exists() {
+                std::fs::File::create(&path)?;
+            }
+        }
+
         let conf = if config_path.exists() {
             macmbx::conf::Conf::load(&config_path)?
         } else {
-            macmbx::conf::Conf::new()
+            let c = macmbx::conf::Conf::new();
+            // Save default config so it persists
+            let mut c2 = c.clone();
+            let _ = c2.save_as(&config_path);
+            c
         };
 
         let store = macmbx::store::Store::open(&mailboxes_dir)?;
@@ -81,6 +96,208 @@ fn data_dir() -> PathBuf {
     std::env::var("HOME")
         .map(|h| PathBuf::from(h).join(".local/share/geudora"))
         .unwrap_or_else(|_| PathBuf::from("."))
+}
+
+/// Toolbar customize dialog — two-column layout with active/hidden buttons
+/// (port of toolbar.c Cmd-click configure + modern reorder UX)
+fn show_toolbar_customize_dialog(
+    parent: &gtk4::ApplicationWindow,
+    conf: &Rc<RefCell<macmbx::conf::Conf>>,
+    button_order: &Rc<RefCell<Vec<String>>>,
+    icons: &Rc<Vec<(String, String)>>,
+    rebuild_toolbar: &Rc<dyn Fn()>,
+) {
+    let dlg = gtk4::Window::builder()
+        .title("Customize Toolbar")
+        .transient_for(parent)
+        .default_width(500)
+        .default_height(450)
+        .modal(true)
+        .build();
+
+    let vbox = gtk4::Box::new(gtk4::Orientation::Vertical, 8);
+    vbox.set_margin_start(16);
+    vbox.set_margin_end(16);
+    vbox.set_margin_top(16);
+    vbox.set_margin_bottom(16);
+
+    let hint = gtk4::Label::new(Some("Check buttons to show on the toolbar. Use arrows to reorder. You can also drag buttons directly on the toolbar."));
+    hint.set_wrap(true);
+    hint.add_css_class("dim-label");
+    hint.set_halign(gtk4::Align::Start);
+    vbox.append(&hint);
+
+    // Build the list
+    let list_box = gtk4::ListBox::new();
+    list_box.set_selection_mode(gtk4::SelectionMode::None);
+    list_box.add_css_class("boxed-list");
+
+    let scroll = gtk4::ScrolledWindow::builder()
+        .child(&list_box)
+        .vexpand(true)
+        .hscrollbar_policy(gtk4::PolicyType::Never)
+        .build();
+
+    let populate_list = {
+        let lb = list_box.clone();
+        let conf_rc = conf.clone();
+        let bo_rc = button_order.clone();
+        let icons_rc = icons.clone();
+        let rebuild = rebuild_toolbar.clone();
+        let dlg_ref = dlg.clone();
+        Rc::new(move || {
+            // Clear
+            while let Some(child) = lb.first_child() {
+                lb.remove(&child);
+            }
+
+            let order = bo_rc.borrow().clone();
+            let c = conf_rc.borrow();
+
+            for (idx, name) in order.iter().enumerate() {
+                let row = gtk4::Box::new(gtk4::Orientation::Horizontal, 8);
+                row.set_margin_start(8);
+                row.set_margin_end(8);
+                row.set_margin_top(6);
+                row.set_margin_bottom(6);
+
+                // Up/down arrows
+                let arrows = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+                let up_btn = gtk4::Button::from_icon_name("go-up-symbolic");
+                up_btn.set_has_frame(false);
+                up_btn.set_sensitive(idx > 0);
+                up_btn.set_valign(gtk4::Align::Center);
+                let down_btn = gtk4::Button::from_icon_name("go-down-symbolic");
+                down_btn.set_has_frame(false);
+                down_btn.set_sensitive(idx < order.len() - 1);
+                down_btn.set_valign(gtk4::Align::Center);
+                arrows.append(&up_btn);
+                arrows.append(&down_btn);
+                row.append(&arrows);
+
+                // Checkbox
+                let vis_key = format!("tb_{}", name.to_ascii_lowercase().replace(' ', "_"));
+                let is_visible = c.get_bool("toolbar", &vis_key, true);
+                let toggle = gtk4::CheckButton::new();
+                toggle.set_active(is_visible);
+                toggle.set_valign(gtk4::Align::Center);
+                row.append(&toggle);
+
+                // Icon
+                let icon_name = icons_rc.iter()
+                    .find(|(n, _)| n == name)
+                    .map(|(_, i)| i.as_str())
+                    .unwrap_or("application-x-executable-symbolic");
+                let img = gtk4::Image::from_icon_name(icon_name);
+                img.set_pixel_size(22);
+                row.append(&img);
+
+                // Name
+                let lbl = gtk4::Label::new(Some(name));
+                lbl.set_halign(gtk4::Align::Start);
+                lbl.set_hexpand(true);
+                row.append(&lbl);
+
+                // Position indicator
+                let pos_lbl = gtk4::Label::new(Some(&format!("{}", idx + 1)));
+                pos_lbl.add_css_class("dim-label");
+                row.append(&pos_lbl);
+
+                lb.append(&row);
+
+                // Wire toggle
+                {
+                    let conf_c = conf_rc.clone();
+                    let key = vis_key.clone();
+                    let rebuild_c = rebuild.clone();
+                    toggle.connect_toggled(move |t| {
+                        conf_c.borrow_mut().set_bool("toolbar", &key, t.is_active());
+                        let _ = conf_c.borrow_mut().save();
+                        rebuild_c();
+                    });
+                }
+
+                // Wire move up — swap and repopulate
+                {
+                    let bo = bo_rc.clone();
+                    let conf_c = conf_rc.clone();
+                    let rebuild_c = rebuild.clone();
+                    let repopulate = dlg_ref.clone();
+                    up_btn.connect_clicked(move |_| {
+                        let mut order = bo.borrow_mut();
+                        if idx > 0 { order.swap(idx, idx - 1); }
+                        let s = order.join(",");
+                        conf_c.borrow_mut().set("toolbar", "button_order", &s);
+                        let _ = conf_c.borrow_mut().save();
+                        drop(order);
+                        rebuild_c();
+                        // Repopulate will be triggered by the caller
+                        repopulate.queue_draw();
+                    });
+                }
+                {
+                    let bo = bo_rc.clone();
+                    let conf_c = conf_rc.clone();
+                    let rebuild_c = rebuild.clone();
+                    let repopulate = dlg_ref.clone();
+                    let len = order.len();
+                    down_btn.connect_clicked(move |_| {
+                        let mut order = bo.borrow_mut();
+                        if idx < len - 1 { order.swap(idx, idx + 1); }
+                        let s = order.join(",");
+                        conf_c.borrow_mut().set("toolbar", "button_order", &s);
+                        let _ = conf_c.borrow_mut().save();
+                        drop(order);
+                        rebuild_c();
+                        repopulate.queue_draw();
+                    });
+                }
+            }
+        })
+    };
+
+    // Up/down buttons trigger repopulate via an idle callback
+    // We need a way for buttons to trigger repopulate — use a draw signal hack
+    // Actually, let's use a simpler approach: store populate_list and call after each move
+    // But closures can't call themselves. Use Rc<RefCell<Option<Rc<dyn Fn()>>>>
+
+    // Simpler: just close and reopen on move. But that's jarring.
+    // Best: repopulate the list after each move using glib::idle_add_local_once
+    {
+        let pop = populate_list.clone();
+        let lb = list_box.clone();
+        // Poll for changes (the queue_draw on dlg signals we need to repopulate)
+        let bo = button_order.clone();
+        let last_order: Rc<RefCell<String>> = Rc::new(RefCell::new(bo.borrow().join(",")));
+        glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
+            let current = bo.borrow().join(",");
+            let mut last = last_order.borrow_mut();
+            if current != *last {
+                *last = current;
+                pop();
+            }
+            if lb.root().is_some() {
+                glib::ControlFlow::Continue
+            } else {
+                glib::ControlFlow::Break
+            }
+        });
+    }
+
+    populate_list();
+
+    vbox.append(&scroll);
+
+    // Close button
+    let close_btn = gtk4::Button::with_label("Done");
+    close_btn.add_css_class("suggested-action");
+    close_btn.set_halign(gtk4::Align::End);
+    let d = dlg.clone();
+    close_btn.connect_clicked(move |_| d.close());
+    vbox.append(&close_btn);
+
+    dlg.set_child(Some(&vbox));
+    dlg.present();
 }
 
 fn build_ui(app: &gtk4::Application) {
@@ -1414,6 +1631,117 @@ fn build_ui(app: &gtk4::Application) {
     prefs_btn.set_action_name(Some("app.preferences"));
     toolbar.append(&prefs_btn);
 
+    // ── Toolbar customization — right-click to show/hide + reorder buttons ──
+    // (port of toolbar.c button visibility + Cmd-drag reorder)
+    {
+        // Icon mapping for all toolbar buttons
+        let tb_icon_map: Vec<(&str, &str)> = vec![
+            ("In", "mail-unread-symbolic"), ("Out", "mail-send-symbolic"),
+            ("Trash", "user-trash-symbolic"), ("Junk", "dialog-warning-symbolic"),
+            ("Delete", "edit-delete-symbolic"), ("New Message", "document-new-symbolic"),
+            ("Reply", "mail-reply-sender-symbolic"), ("Reply All", "mail-reply-all-symbolic"),
+            ("Forward", "mail-forward-symbolic"), ("Redirect", "go-next-symbolic"),
+            ("Check Mail", "view-refresh-symbolic"), ("Send Queued", "mail-send-symbolic"),
+            ("Find", "edit-find-symbolic"), ("Address Book", "contact-new-symbolic"),
+            ("Filters", "view-list-symbolic"), ("Print", "printer-symbolic"),
+            ("Offline", "network-transmit-receive-symbolic"),
+            ("Theme", "preferences-desktop-appearance-symbolic"),
+            ("Preferences", "emblem-system-symbolic"),
+        ];
+
+        // Default order
+        let default_order: Vec<&str> = vec![
+            "In", "Out", "Trash", "Junk", "Delete",
+            "New Message", "Reply", "Reply All", "Forward", "Redirect",
+            "Check Mail", "Send Queued",
+            "Find", "Address Book", "Filters", "Print",
+            "Offline", "Theme", "Preferences",
+        ];
+
+        // Map name → widget
+        let mut widget_map: std::collections::HashMap<String, gtk4::Widget> = std::collections::HashMap::new();
+        widget_map.insert("In".into(), tb_in.clone().upcast());
+        widget_map.insert("Out".into(), tb_out.clone().upcast());
+        widget_map.insert("Trash".into(), tb_trash.clone().upcast());
+        widget_map.insert("Junk".into(), tb_junk.clone().upcast());
+        widget_map.insert("Delete".into(), tb_delete.clone().upcast());
+        widget_map.insert("New Message".into(), tb_new.clone().upcast());
+        widget_map.insert("Reply".into(), tb_reply.clone().upcast());
+        widget_map.insert("Reply All".into(), tb_reply_all.clone().upcast());
+        widget_map.insert("Forward".into(), tb_forward.clone().upcast());
+        widget_map.insert("Redirect".into(), tb_redirect.clone().upcast());
+        widget_map.insert("Check Mail".into(), tb_check.clone().upcast());
+        widget_map.insert("Send Queued".into(), tb_send.clone().upcast());
+        widget_map.insert("Find".into(), tb_find.clone().upcast());
+        widget_map.insert("Address Book".into(), tb_addr.clone().upcast());
+        widget_map.insert("Filters".into(), tb_filt.clone().upcast());
+        widget_map.insert("Print".into(), tb_print.clone().upcast());
+        widget_map.insert("Offline".into(), offline_btn.clone().upcast());
+        widget_map.insert("Theme".into(), theme_btn.clone().upcast());
+        widget_map.insert("Preferences".into(), prefs_btn.clone().upcast());
+
+        // Load saved order from conf (or use default)
+        let saved_order = {
+            let c = state.borrow().conf.borrow().clone();
+            let order_str = c.get("toolbar", "button_order").unwrap_or("");
+            if order_str.is_empty() {
+                default_order.iter().map(|s| s.to_string()).collect::<Vec<_>>()
+            } else {
+                order_str.split(',').map(|s| s.trim().to_string()).collect::<Vec<_>>()
+            }
+        };
+
+        // Shared mutable order
+        let button_order: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(saved_order));
+        let widget_map_rc = Rc::new(widget_map);
+
+        // Helper: rebuild toolbar from current order
+        // Toggle visibility without reparenting — just show/hide
+        let rebuild_toolbar: Rc<dyn Fn()> = {
+            let wm = widget_map_rc.clone();
+            let conf_rc = state.borrow().conf.clone();
+            Rc::new(move || {
+                let c = conf_rc.borrow();
+                for (name, w) in wm.iter() {
+                    let key = format!("tb_{}", name.to_ascii_lowercase().replace(' ', "_"));
+                    w.set_visible(c.get_bool("toolbar", &key, true));
+                }
+            })
+        };
+
+        // Initial build from saved order
+        rebuild_toolbar();
+
+        // Right-click on toolbar → customize popup
+        let gesture = gtk4::GestureClick::new();
+        gesture.set_button(3);
+        let conf_for_tb = state.borrow().conf.clone();
+        let bo_for_popup = button_order.clone();
+        let wm_for_popup = widget_map_rc.clone();
+        let icons_rc: Rc<Vec<(String, String)>> = Rc::new(
+            tb_icon_map.iter().map(|(n, i)| (n.to_string(), i.to_string())).collect()
+        );
+        // Right-click → open customize dialog (not popover — proper window)
+        let gesture = gtk4::GestureClick::new();
+        gesture.set_button(3);
+        let conf_for_tb = state.borrow().conf.clone();
+        let bo_for_popup = button_order.clone();
+        let wm_for_popup = widget_map_rc.clone();
+        let icons_rc: Rc<Vec<(String, String)>> = Rc::new(
+            tb_icon_map.iter().map(|(n, i)| (n.to_string(), i.to_string())).collect()
+        );
+        let rebuild_for_popup = rebuild_toolbar.clone();
+        let win_for_tb = window.clone();
+
+        gesture.connect_released(move |_g, _n, _x, _y| {
+            show_toolbar_customize_dialog(
+                &win_for_tb, &conf_for_tb, &bo_for_popup,
+                &icons_rc, &rebuild_for_popup,
+            );
+        });
+        toolbar.add_controller(gesture);
+    }
+
     main_box.append(&toolbar);
     main_box.append(&gtk4::Separator::new(gtk4::Orientation::Horizontal));
     main_box.append(&hpaned);
@@ -1813,21 +2141,32 @@ fn build_ui(app: &gtk4::Application) {
     // Initialize link history
     linkhistory::init(&state.borrow().data_dir);
 
-    // Refresh callback — reload TOC data in all open mailbox tabs
+    // Refresh callback — open In mailbox and refresh open tabs
+    // (port of check_done_cb → eudora_open_mailbox_by_name("In") + refresh)
+    let open_for_refresh = open_mailbox_tab.clone();
     let nb_refresh = content_notebook.clone();
     let state_refresh = state.clone();
     let refresh_fn: Rc<dyn Fn()> = Rc::new(move || {
-        // Re-read TOC for each open mailbox tab and update the list store
-        // For now, just signal that data changed — the simplest approach
-        // is to trigger the sidebar selection again
-        eprintln!("rMail: refreshing mailbox views after check");
-        // Walk notebook pages — each mailbox tab has a widget_name set to the path
-        let n = nb_refresh.n_pages();
-        for i in 0..n {
-            if let Some(page) = nb_refresh.nth_page(Some(i)) {
-                // Queue a draw to refresh display
-                page.queue_draw();
+        // Open/switch to In mailbox (like original Eudora)
+        let mb_dir = state_refresh.borrow().data_dir.join("mailboxes");
+        let in_path = mb_dir.join("In");
+        if in_path.exists() {
+            // Remove existing "In" tab so it reloads fresh data
+            let n = nb_refresh.n_pages();
+            for i in (0..n).rev() {
+                if let Some(tab_label) = nb_refresh.tab_label(&nb_refresh.nth_page(Some(i)).unwrap()) {
+                    if let Some(lbl) = tab_label.first_child() {
+                        if let Ok(l) = lbl.downcast::<gtk4::Label>() {
+                            if l.text() == "In" {
+                                nb_refresh.remove_page(Some(i));
+                                break;
+                            }
+                        }
+                    }
+                }
             }
+            // Re-open with fresh TOC data
+            open_for_refresh(&in_path.to_string_lossy(), "In");
         }
     });
 
