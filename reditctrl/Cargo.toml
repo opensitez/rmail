@@ -1,0 +1,22 @@
+[package]
+name = "reditctrl"
+version = "0.1.0"
+edition = "2021"
+description = "Rich text editor widget for GTK4 — port of gEditCtrl"
+license = "BSD-3-Clause"
+
+[lib]
+name = "reditctrl"
+
+[dependencies]
+gtk4 = { version = "0.9", package = "gtk4", features = ["v4_10"] }
+cairo-rs = { version = "0.20", package = "cairo-rs" }
+pango = { version = "0.20", package = "pango" }
+pangocairo = { version = "0.20", package = "pangocairo" }
+gdk4 = { version = "0.9", package = "gdk4" }
+gdk-pixbuf = { version = "0.20", package = "gdk-pixbuf" }
+glib = { version = "0.20", package = "glib" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]

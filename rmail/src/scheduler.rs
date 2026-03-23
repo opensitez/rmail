@@ -281,7 +281,8 @@ pub fn start(mailer: std::sync::Arc<Mailer>, status_label: gtk4::Label, check_in
             }
         }
 
-        if NEED_CHECK.swap(false, Ordering::Relaxed) && !CHECK_IN_PROGRESS.load(Ordering::Relaxed) {
+        if NEED_CHECK.load(Ordering::Relaxed) && !CHECK_IN_PROGRESS.load(Ordering::Relaxed) {
+            NEED_CHECK.store(false, Ordering::Relaxed);
             CHECK_IN_PROGRESS.store(true, Ordering::Relaxed);
             status_label.set_text("Checking mail...");
             let task_id = crate::tasks::add_task("mail-inbox-symbolic", "Checking mail...");
@@ -314,7 +315,8 @@ pub fn start(mailer: std::sync::Arc<Mailer>, status_label: gtk4::Label, check_in
             });
         }
 
-        if NEED_SEND.swap(false, Ordering::Relaxed) && !SEND_IN_PROGRESS.load(Ordering::Relaxed) {
+        if NEED_SEND.load(Ordering::Relaxed) && !SEND_IN_PROGRESS.load(Ordering::Relaxed) {
+            NEED_SEND.store(false, Ordering::Relaxed);
             SEND_IN_PROGRESS.store(true, Ordering::Relaxed);
             status_label.set_text("Sending mail...");
             let task_id = crate::tasks::add_task("mail-send-symbolic", "Sending mail...");

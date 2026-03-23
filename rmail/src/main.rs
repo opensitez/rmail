@@ -1056,28 +1056,53 @@ fn build_ui(app: &gtk4::Application) {
                     if let Ok(toc) = macmbx::toc::Toc::open(&mbox_path) {
                         if let Ok(raw) = macmbx::ops::read_message(&toc, idx as usize) {
                             let raw_str = String::from_utf8_lossy(&raw);
-                            let mut header_text = String::new();
-                            for hdr in &["From", "To", "Subject", "Date", "Cc"] {
-                                if let Some(val) = extract_header(&raw_str, hdr) {
-                                    header_text.push_str(&format!("{}: {}\n", hdr, val));
+
+                            // Build print doc with headers + styled body (images resolved)
+                            let doc = reditctrl::document::Document::new();
+                            let ctrl = reditctrl::glue::EditorCtrl::new(doc);
+
+                            // Insert headers as plain text
+                            let mut hdr_text = String::new();
+                            for h in &["From", "To", "Subject", "Date", "Cc"] {
+                                if let Some(val) = extract_header(&raw_str, h) {
+                                    hdr_text.push_str(&format!("{}: {}\n", h, val));
                                 }
                             }
-                            header_text.push('\n');
+                            hdr_text.push('\n');
+                            ctrl.set_text(&hdr_text, -1);
 
-                            let doc = reditctrl::document::Document::new();
-                            doc.insert_text(0, &header_text);
-                            // Add decoded body after headers
-                            let body = if let Some(parsed) = crispy::msg::parse(&raw) {
-                                parsed.body_plain().unwrap_or("").to_string()
+                            // Insert body as markup (handles images via insert_markup)
+                            let hdr_len = ctrl.get_length();
+                            if let Some(parsed) = crispy::msg::parse(&raw) {
+                                // Resolve cid: for inline images
+                                let mut body = parsed.body_html()
+                                    .or_else(|| parsed.body_plain())
+                                    .unwrap_or("").to_string();
+                                for part in &parsed.parts {
+                                    if let Some(ref cid) = part.content_id {
+                                        if !part.data.is_empty() {
+                                            let ext = if part.mime_type.contains("png") { "png" } else { "jpg" };
+                                            let tmp = std::env::temp_dir().join(format!("rmail_print_{}.{}", cid, ext));
+                                            if std::fs::write(&tmp, &part.data).is_ok() {
+                                                body = body.replace(&format!("cid:{}", cid), &tmp.to_string_lossy());
+                                            }
+                                        }
+                                    }
+                                }
+                                let is_html = body.contains("<") && (body.contains("<b>") || body.contains("<img") || body.contains("<br>") || body.contains("<p>") || body.contains("<div"));
+                                if is_html {
+                                    ctrl.insert_markup(hdr_len, &body);
+                                } else {
+                                    ctrl.insert_text(hdr_len, &body, -1);
+                                }
                             } else {
-                                find_body(&raw_str).to_string()
-                            };
-                            let hdr_len = header_text.chars().count() as i32;
-                            doc.insert_text(hdr_len, &body);
+                                let body = find_body(&raw_str);
+                                ctrl.insert_text(hdr_len, body, -1);
+                            }
 
                             reditctrl::print::print_document(
                                 &win_for_print.clone().upcast(),
-                                &doc,
+                                &ctrl.doc,
                                 Some(&toc.msgs[idx as usize].subject),
                             );
                         }
@@ -2119,7 +2144,10 @@ fn get_selected_msg(nb: &gtk4::Notebook) -> Option<(String, i32, gtk4::TreeView,
     let scroll = paned.start_child()?.downcast::<gtk4::ScrolledWindow>().ok()?;
     let tree = scroll.child()?.downcast::<gtk4::TreeView>().ok()?;
     let sel = tree.selection();
-    let (model, iter) = sel.selected()?;
+    // Works with both Single and Multiple selection modes
+    let (rows, model) = sel.selected_rows();
+    if rows.len() != 1 { return None; } // only act on single selection
+    let iter = model.iter(&rows[0])?;
     let idx: i32 = model.get(&iter, 0);
     Some((mbox_path, idx, tree, iter))
 }
@@ -2370,33 +2398,32 @@ fn build_mailbox_tab(
 
     // ── Right-click context menu on message list ──
     {
-        let menu = gio::Menu::new();
-        menu.append(Some("Reply"), Some("app.reply"));
-        menu.append(Some("Reply All"), Some("app.reply-all"));
-        menu.append(Some("Forward"), Some("app.forward"));
-        menu.append(Some("Redirect"), Some("app.redirect"));
-        menu.append_section(None, &{
-            let s = gio::Menu::new();
-            s.append(Some("Delete"), Some("app.delete"));
-            s
-        });
-        let transfer = gio::Menu::new();
-        transfer.append(Some("→ In"), Some("app.transfer-in"));
-        transfer.append(Some("→ Out"), Some("app.transfer-out"));
-        transfer.append(Some("→ Trash"), Some("app.transfer-trash"));
-        menu.append_submenu(Some("Transfer"), &transfer);
-
-        let popover = gtk4::PopoverMenu::from_model(Some(&menu));
-        popover.set_parent(&tree);
-        popover.set_has_arrow(false);
-
         let gesture = gtk4::GestureClick::new();
-        gesture.set_button(3); // right click
-        let pop = popover.clone();
-        gesture.connect_pressed(move |g, _n, x, y| {
+        gesture.set_button(3); // right click only
+        let tree_for_ctx = tree.clone();
+        gesture.connect_pressed(move |_g, _n, x, y| {
+            let menu = gio::Menu::new();
+            menu.append(Some("Reply"), Some("app.reply"));
+            menu.append(Some("Reply All"), Some("app.reply-all"));
+            menu.append(Some("Forward"), Some("app.forward"));
+            menu.append(Some("Redirect"), Some("app.redirect"));
+            menu.append_section(None, &{
+                let s = gio::Menu::new();
+                s.append(Some("Delete"), Some("app.delete"));
+                s
+            });
+            let transfer = gio::Menu::new();
+            transfer.append(Some("→ In"), Some("app.transfer-in"));
+            transfer.append(Some("→ Out"), Some("app.transfer-out"));
+            transfer.append(Some("→ Trash"), Some("app.transfer-trash"));
+            menu.append_submenu(Some("Transfer"), &transfer);
+
+            let popover = gtk4::PopoverMenu::from_model(Some(&menu));
+            popover.set_parent(&tree_for_ctx);
+            popover.set_has_arrow(false);
             let rect = gtk4::gdk::Rectangle::new(x as i32, y as i32, 1, 1);
-            pop.set_pointing_to(Some(&rect));
-            pop.popup();
+            popover.set_pointing_to(Some(&rect));
+            popover.popup();
         });
         tree.add_controller(gesture);
     }
@@ -2433,8 +2460,11 @@ fn build_mailbox_tab(
         let conf = conf.clone();
         let sel = tree.selection();
         sel.connect_changed(move |sel| {
-            let (model, iter) = match sel.selected() {
-                Some(x) => x,
+            // Only show preview when exactly one message is selected
+            let (rows, model) = sel.selected_rows();
+            if rows.len() != 1 { return; }
+            let iter = match model.iter(&rows[0]) {
+                Some(i) => i,
                 None => return,
             };
             let idx: i32 = model.get(&iter, 0);
@@ -3286,38 +3316,20 @@ fn create_message_view_full(
     }
     vbox.append(&hdr_box);
 
-    // ── Body — use crispy MIME parser for proper decoding ──
-    let (body_text, is_html) = {
-        if let Some(parsed) = crispy::msg::parse(raw.as_bytes()) {
-            if let Some(html) = parsed.body_html() {
-                let mut html_str = html.to_string();
-                // Resolve cid: references to Embedded/ file paths
-                // inline parts have content_id — match cid:xxx to the part's data
-                // For now, strip cid: refs that can't be resolved
-                (html_str, true)
-            } else if let Some(plain) = parsed.body_plain() {
-                let text = if max_body_len > 0 && plain.len() > max_body_len {
-                    &plain[..max_body_len]
-                } else { plain };
-                (text.to_string(), false)
-            } else {
-                let body = find_body(raw);
-                (body.to_string(), false)
-            }
-        } else {
-            // Fallback — raw body, try QP decode
-            let body = find_body(raw);
-            let decoded = crispy::encode::qp_decode(body);
-            let text = String::from_utf8_lossy(&decoded).to_string();
-            let is_html = text.contains("<html") || text.contains("<body")
-                || text.contains("<div") || text.contains("<p>");
-            if max_body_len > 0 && text.len() > max_body_len {
-                (text[..max_body_len].to_string(), is_html)
-            } else {
-                (text, is_html)
-            }
-        }
+    // ── Body — use raw body from mbox, same as C version (message.c:632-646) ──
+    // Eudora stores the body as-is in the mbox file. For HTML messages,
+    // <img src="..."> tags already have file paths to the Embedded/ directory.
+    // No MIME parsing needed — that's for incoming messages, not stored ones.
+    let body = find_body(raw);
+    let body_text = if max_body_len > 0 && body.len() > max_body_len {
+        &body[..max_body_len]
+    } else {
+        body
     };
+    let is_html = body_text.contains("<html") || body_text.contains("<body")
+        || body_text.contains("<!doc") || body_text.contains("<div")
+        || (body_text.contains("<b>") && body_text.contains("</b>"))
+        || body_text.contains("<img");
 
     // Use reditctrl for the body (port of message.c using geditctrl_new)
     let editor = reditctrl::gtk_widget::EditorWidget::new();
@@ -3347,32 +3359,23 @@ fn create_message_view_full(
     // Read-only
     editor.ctrl.set_editable(false);
 
-    // Wire print button — export headers + body to PDF
+    // Wire print button — print the editor's document directly
+    // (same document that has images + styles loaded)
     {
-        let raw_for_print = raw.to_string();
+        let raw_for_hdr = raw.to_string();
+        let print_ctrl = editor.ctrl.clone();
         btn_print.connect_clicked(move |btn| {
-            let subject = extract_header(&raw_for_print, "Subject").unwrap_or_else(|| "Message".to_string());
-            let mut print_text = String::new();
-            for hdr in &["From", "To", "Subject", "Date", "Cc"] {
-                if let Some(val) = extract_header(&raw_for_print, hdr) {
-                    print_text.push_str(&format!("{}: {}\n", hdr, val));
-                }
-            }
-            print_text.push('\n');
-            let body = find_body(&raw_for_print);
-            // QP decode the body
-            let decoded = crispy::encode::qp_decode(body);
-            print_text.push_str(&String::from_utf8_lossy(&decoded));
+            let subject = extract_header(&raw_for_hdr, "Subject")
+                .unwrap_or_else(|| "Message".to_string());
 
-            let doc = reditctrl::document::Document::new();
-            doc.insert_text(0, &print_text);
-
+            // Print the editor's document — render_to_cairo handles
+            // all styles, images, quotes, etc.
             let parent: gtk4::Widget = if let Some(root) = btn.root() {
                 root.upcast()
             } else {
                 btn.clone().upcast()
             };
-            reditctrl::print::print_document(&parent, &doc, Some(&subject));
+            reditctrl::print::print_document(&parent, &print_ctrl.doc, Some(&subject));
         });
     }
 

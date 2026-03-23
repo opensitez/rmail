@@ -858,42 +858,19 @@ fn build_compose_tab_inner(conf: &Conf, prefill: Option<&ComposeData>, mailer: A
 
     vbox.append(&paned);
 
-    // Print button — headers + styled body via render_to_cairo
+    // Print button — use the editor's document directly (has styles + images)
     {
         let ed = editor_rc.clone();
-        let to = to_entry.clone();
         let subj = subj_entry.clone();
-        let cc = cc_entry.clone();
-        let from = from_dd.clone();
         print_btn.connect_clicked(move |btn| {
-            let mut header_text = String::new();
-            let to_text = to.text();
-            if !to_text.is_empty() { header_text.push_str(&format!("To: {}\n", to_text)); }
-            if let Some(item) = from.selected_item().and_then(|i| i.downcast::<gtk4::StringObject>().ok()) {
-                header_text.push_str(&format!("From: {}\n", item.string()));
-            }
             let subj_text = subj.text();
-            if !subj_text.is_empty() { header_text.push_str(&format!("Subject: {}\n", subj_text)); }
-            let cc_text = cc.text();
-            if !cc_text.is_empty() { header_text.push_str(&format!("Cc: {}\n", cc_text)); }
-            header_text.push('\n');
-
-            // Build print doc: headers + editor body
-            let print_doc = reditctrl::document::Document::new();
-            print_doc.insert_text(0, &header_text);
-            let body = ed.editor().get_text();
-            if !body.is_empty() {
-                let hdr_len = header_text.chars().count() as i32;
-                print_doc.insert_text(hdr_len, &body);
-            }
-
+            let title = if subj_text.is_empty() { "Compose" } else { &subj_text };
             let parent: gtk4::Widget = if let Some(root) = btn.root() {
                 root.upcast()
             } else {
                 btn.clone().upcast()
             };
-            let title = if subj_text.is_empty() { "Compose" } else { &subj_text };
-            reditctrl::print::print_document(&parent, &print_doc, Some(title));
+            reditctrl::print::print_document(&parent, &ed.ctrl.doc, Some(title));
         });
     }
 
