@@ -348,10 +348,12 @@ impl Mailer {
     }
 
     fn smtp_security_from_ssl(ssl: u8) -> (SmtpSecurity, u16) {
+        // Port is always 25 unless implicit SSL (alt port).
+        // Submission port 587 is handled separately via use_submission_port pref.
         if ssl & 4 != 0 {
             (SmtpSecurity::Ssl, 465)
         } else if ssl & 2 != 0 || ssl & 1 != 0 {
-            (SmtpSecurity::StartTls, 587)
+            (SmtpSecurity::StartTls, 25)
         } else {
             (SmtpSecurity::Plain, 25)
         }
@@ -419,7 +421,14 @@ impl Mailer {
         }
 
         let mut smtp = self.factory.create_smtp();
-        smtp.connect(server, port, security)?;
+        match smtp.connect(server, port, security) {
+            Ok(()) => {}
+            Err(e) if e.to_string().contains("certificate accepted") => {
+                smtp = self.factory.create_smtp();
+                smtp.connect(server, port, security)?;
+            }
+            Err(e) => return Err(e),
+        }
 
         // Authenticate
         if let Some(pw) = self.get_password(acct) {
@@ -442,7 +451,20 @@ impl Mailer {
         let (security, port) = Self::pop3_security_from_ssl(pop_ssl);
 
         let mut pop = self.factory.create_pop3();
-        pop.connect(&acct.server, port, security)?;
+        match pop.connect(&acct.server, port, security) {
+            Ok(()) => {}
+            Err(e) => {
+                let msg = e.to_string();
+                eprintln!("connect_pop3: first connect error: {}", msg);
+                if msg.contains("certificate accepted") {
+                    eprintln!("connect_pop3: cert accepted, retrying...");
+                    pop = self.factory.create_pop3();
+                    pop.connect(&acct.server, port, security)?;
+                } else {
+                    return Err(e);
+                }
+            }
+        }
 
         let pw = self.get_password(acct).ok_or_else(|| {
             io::Error::new(io::ErrorKind::PermissionDenied, "no password")
@@ -452,8 +474,30 @@ impl Mailer {
         } else {
             &acct.username
         };
-        pop.authenticate(user, &pw)?;
-        Ok(pop)
+        match pop.authenticate(user, &pw) {
+            Ok(()) => Ok(pop),
+            Err(_auth_err) => {
+                // Auth failed — password might be stale. Force re-prompt via cred_fn
+                // by calling it directly (bypasses config cache).
+                if let Some(ref cred_fn) = self.cred_fn {
+                    if let Some(new_pw) = cred_fn(user, &acct.server) {
+                        // Reconnect since POP3 session is likely dead after auth failure
+                        pop = self.factory.create_pop3();
+                        match pop.connect(&acct.server, port, security) {
+                            Ok(()) => {}
+                            Err(e) if e.to_string().contains("certificate accepted") => {
+                                pop = self.factory.create_pop3();
+                                pop.connect(&acct.server, port, security)?;
+                            }
+                            Err(e) => return Err(e),
+                        }
+                        pop.authenticate(user, &new_pw)?;
+                        return Ok(pop);
+                    }
+                }
+                Err(io::Error::new(io::ErrorKind::PermissionDenied, "authentication failed"))
+            }
+        }
     }
 
     fn connect_imap(&self, acct: &Account) -> io::Result<Box<dyn ImapClient>> {
@@ -461,7 +505,14 @@ impl Mailer {
         let (security, port) = Self::imap_security_from_ssl(imap_ssl);
 
         let mut imap = self.factory.create_imap();
-        imap.connect(&acct.server, port, security)?;
+        match imap.connect(&acct.server, port, security) {
+            Ok(()) => {}
+            Err(e) if e.to_string().contains("certificate accepted") => {
+                imap = self.factory.create_imap();
+                imap.connect(&acct.server, port, security)?;
+            }
+            Err(e) => return Err(e),
+        }
 
         let pw = self.get_password(acct).ok_or_else(|| {
             io::Error::new(io::ErrorKind::PermissionDenied, "no password")
@@ -471,8 +522,27 @@ impl Mailer {
         } else {
             &acct.username
         };
-        imap.login(user, &pw)?;
-        Ok(imap)
+        match imap.login(user, &pw) {
+            Ok(()) => Ok(imap),
+            Err(_auth_err) => {
+                if let Some(ref cred_fn) = self.cred_fn {
+                    if let Some(new_pw) = cred_fn(user, &acct.server) {
+                        imap = self.factory.create_imap();
+                        match imap.connect(&acct.server, port, security) {
+                            Ok(()) => {}
+                            Err(e) if e.to_string().contains("certificate accepted") => {
+                                imap = self.factory.create_imap();
+                                imap.connect(&acct.server, port, security)?;
+                            }
+                            Err(e) => return Err(e),
+                        }
+                        imap.login(user, &new_pw)?;
+                        return Ok(imap);
+                    }
+                }
+                Err(io::Error::new(io::ErrorKind::PermissionDenied, "authentication failed"))
+            }
+        }
     }
 
     // ══════════════════════════════════════════════════════════════
@@ -494,6 +564,61 @@ impl Mailer {
         let idx = append_to_mbox(&mut out_toc, message, from, State::Queued, 3)?;
         out_toc.save()?;
         Ok(idx)
+    }
+
+    /// Update an existing queued message in-place (like original Eudora SaveComp).
+    /// Appends new data to end of mbox, updates the TOC entry's offset/length.
+    /// Same slot, no duplicates.
+    pub fn update_queued(
+        &self,
+        index: usize,
+        message: &[u8],
+        from: &str,
+    ) -> io::Result<()> {
+        let out_path = self.store.find_special(MailboxType::Out)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "no Out mailbox"))?;
+        let mut out_toc = Toc::open_or_create(&out_path)?;
+        if index >= out_toc.msgs.len() {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "index out of range"));
+        }
+
+        // Write new data at end of mbox (like FindTOCSpot + WriteComp)
+        use std::io::Seek;
+        let real_sender = if from.is_empty() { extract_from_header(message) } else { from.to_string() };
+        let from_line = write_from_line(&real_sender);
+
+        let mut file = fs::OpenOptions::new()
+            .create(true).write(true).append(false)
+            .open(&out_toc.mbox_path)?;
+
+        let offset = file.seek(io::SeekFrom::End(0))? as i64;
+        file.write_all(from_line.as_bytes())?;
+        file.write_all(message)?;
+        if !message.is_empty() && message[message.len() - 1] != b'\n' {
+            file.write_all(b"\n")?;
+        }
+        let end = file.seek(io::SeekFrom::End(0))? as i64;
+        let length = end - offset;
+
+        // Update existing TOC entry (same slot, new offset/length — like UpdateSum)
+        let body_offset = find_body_offset(message) as i32 + from_line.len() as i32;
+        out_toc.msgs[index].offset = offset;
+        out_toc.msgs[index].length = length;
+        out_toc.msgs[index].body_offset = body_offset;
+        out_toc.msgs[index].from = real_sender;
+
+        // Update subject
+        let subject = {
+            let text = String::from_utf8_lossy(message);
+            text.lines()
+                .find(|l| l.len() >= 8 && l[..8].eq_ignore_ascii_case("Subject:"))
+                .map(|l| l[8..].trim().to_string())
+                .unwrap_or_default()
+        };
+        out_toc.msgs[index].subject = subject;
+        out_toc.dirty = true;
+        out_toc.save()?;
+        Ok(())
     }
 
     /// Queue a message for a specific account/personality.
@@ -518,20 +643,28 @@ impl Mailer {
     }
 
     /// Send all queued messages across all accounts.
-    /// Returns total count sent.
+    /// Returns total count sent. Returns error if all accounts fail.
     pub fn send(&self) -> io::Result<i32> {
         let mut total_sent = 0i32;
+        let mut last_err: Option<io::Error> = None;
+
         // Send dominant account
         match self.send_account(0) {
             Ok(n) => total_sent += n,
-            Err(_) => {}
+            Err(e) => { last_err = Some(e); }
         }
         // Send each personality
         let n = self.conf.count_accounts();
         for i in 1..=n {
             match self.send_account(i) {
                 Ok(n) => total_sent += n,
-                Err(_) => {}
+                Err(e) => { last_err = Some(e); }
+            }
+        }
+        // If nothing was sent and there was an error, report it
+        if total_sent == 0 {
+            if let Some(e) = last_err {
+                return Err(e);
             }
         }
         Ok(total_sent)
@@ -791,8 +924,12 @@ impl Mailer {
                 continue;
             }
 
-            // Append
-            let idx = append_to_mbox(&mut inbox, &msg, "", State::Unread, 3)?;
+            // Decode MIME — extract body + save attachments (like original Eudora SaveAndSplit)
+            let save_attach = self.conf.get_bool("attachments", "auto_save_attachments", false);
+            let decoded_msg = decode_mime_message_opt(&msg, self.store.base_path(), save_attach);
+
+            // Append decoded message (body text + attachment notes) instead of raw MIME
+            let idx = append_to_mbox(&mut inbox, &decoded_msg, "", State::Unread, 3)?;
             if account_index > 0 {
                 inbox.msgs[idx].pers_id = personality_hash(&acct.name);
                 inbox.msgs[idx].pop_pers_id = personality_hash(&acct.name);
@@ -951,7 +1088,10 @@ impl Mailer {
             };
 
             let state = imap_flags_to_state(flags);
-            let idx = append_to_mbox(&mut inbox, &msg, "", state, 3)?;
+            // Decode MIME — extract body + save attachments
+            let save_attach = self.conf.get_bool("attachments", "auto_save_attachments", false);
+            let decoded_msg = decode_mime_message_opt(&msg, self.store.base_path(), save_attach);
+            let idx = append_to_mbox(&mut inbox, &decoded_msg, "", state, 3)?;
             inbox.msgs[idx].uid_hash = uid as u32;
             if account_index > 0 {
                 inbox.msgs[idx].pers_id = personality_hash(&acct.name);
@@ -1494,6 +1634,220 @@ fn find_body_offset(msg: &[u8]) -> usize {
 /// Write a "From " envelope line.
 fn write_from_line(sender: &str) -> String {
     format!("From {} Thu Jan  1 00:00:00 1970\n", sender)
+}
+
+/// Decode a MIME message at download time (like original Eudora's SaveAndSplit).
+///
+/// - Parses MIME parts via crispy::msg::parse
+/// - Always decodes inline images (cid:) to `Embedded/` and rewrites URLs in body
+/// - Optionally saves attachments to `Attachments/` (if `save_attachments` is true)
+/// - Returns a rebuilt message: original headers + decoded text body +
+///   "Attachment Converted" notes pointing to saved files
+///
+/// If the message is not multipart MIME, returns it unchanged.
+fn decode_mime_message(raw: &[u8], base_path: &Path) -> Vec<u8> {
+    decode_mime_message_opt(raw, base_path, true)
+}
+
+fn decode_mime_message_opt(raw: &[u8], base_path: &Path, save_attachments: bool) -> Vec<u8> {
+    let text = String::from_utf8_lossy(raw);
+
+    // Check if it's multipart MIME
+    let header_end = text.find("\r\n\r\n")
+        .or_else(|| text.find("\n\n"));
+    let headers = match header_end {
+        Some(pos) => &text[..pos],
+        None => return raw.to_vec(), // no body
+    };
+    if !headers.to_ascii_lowercase().contains("multipart/") {
+        return raw.to_vec(); // not MIME multipart — keep as-is
+    }
+
+    // Parse with crispy
+    let parsed = match crispy::msg::parse(raw) {
+        Some(p) => p,
+        None => return raw.to_vec(),
+    };
+
+    // Set up directories
+    let attach_dir = base_path.parent().unwrap_or(base_path).join("Attachments");
+    let embed_dir = base_path.parent().unwrap_or(base_path).join("Embedded");
+    // Always create Embedded for inline images
+    let _ = fs::create_dir_all(&embed_dir);
+
+    // Extract body text (prefer HTML, fall back to plain)
+    let mut body = String::new();
+    if let Some(idx) = parsed.body_html_index {
+        if let Some(html) = parsed.parts[idx].as_text() {
+            body = html.to_string();
+        }
+    } else if let Some(idx) = parsed.body_plain_index {
+        if let Some(plain) = parsed.parts[idx].as_text() {
+            body = plain.to_string();
+        }
+    }
+
+    // Process parts: always decode inline images, optionally save attachments
+    let mut attach_notes = Vec::new();
+    for part in &parsed.parts {
+        if part.data.is_empty() { continue; }
+
+        if let Some(ref cid) = part.content_id {
+            // Inline image — always save to Embedded/, rewrite cid: in body
+            let ext = mime_ext(&part.mime_type);
+            let safe_cid = sanitize_filename(cid);
+            let fname = format!("{}.{}", safe_cid, ext);
+            let path = embed_dir.join(&fname);
+            if fs::write(&path, &part.data).is_ok() {
+                let cid_ref = format!("cid:{}", cid);
+                let file_ref = format!("file://{}", path.display());
+                body = body.replace(&cid_ref, &file_ref);
+            }
+        } else if part.is_attachment && save_attachments {
+            // Save to Attachments/ only if config says so
+            let _ = fs::create_dir_all(&attach_dir);
+            let fname = part.filename.as_deref().unwrap_or("attachment");
+            let safe_name = sanitize_filename(fname);
+            let path = unique_path(&attach_dir, &safe_name);
+            if fs::write(&path, &part.data).is_ok() {
+                attach_notes.push(format!("Attachment Converted: \"{}\"", path.display()));
+            }
+        }
+    }
+
+    // Rebuild message: original headers (with Content-Type replaced) + decoded body + attachment notes
+    let headers_str = match header_end {
+        Some(pos) => &text[..pos],
+        None => &text[..],
+    };
+
+    // Replace multipart Content-Type with the decoded body's type
+    // so the viewer doesn't try to re-parse as MIME
+    let mut new_headers = String::with_capacity(headers_str.len());
+    let mut skip_continuation = false;
+    for line in headers_str.lines() {
+        if skip_continuation {
+            // Continuation lines start with whitespace
+            if line.starts_with(' ') || line.starts_with('\t') {
+                continue;
+            }
+            skip_continuation = false;
+        }
+        if line.len() > 12 && line[..13].eq_ignore_ascii_case("content-type:") {
+            // Replace with decoded type
+            let ct = if body.contains("<html") || body.contains("<body") || body.contains("<div") {
+                "Content-Type: text/html; charset=UTF-8"
+            } else {
+                "Content-Type: text/plain; charset=UTF-8"
+            };
+            new_headers.push_str(ct);
+            new_headers.push_str("\r\n");
+            skip_continuation = true; // skip boundary= continuation
+            continue;
+        }
+        // Also skip Content-Transfer-Encoding and MIME-Version (decoded now)
+        if line.len() > 25 && line[..26].eq_ignore_ascii_case("content-transfer-encoding:") {
+            skip_continuation = true;
+            continue;
+        }
+        new_headers.push_str(line);
+        new_headers.push_str("\r\n");
+    }
+
+    let mut out = Vec::with_capacity(new_headers.len() + body.len() + 256);
+    out.extend_from_slice(new_headers.as_bytes());
+    out.extend_from_slice(b"\r\n"); // blank line separator
+    out.extend_from_slice(body.as_bytes());
+    if !body.ends_with('\n') {
+        out.push(b'\n');
+    }
+    // Append attachment notes (like original Eudora "Attachment Converted" lines)
+    for note in &attach_notes {
+        out.push(b'\n');
+        out.extend_from_slice(note.as_bytes());
+    }
+    out.push(b'\n');
+    out
+}
+
+/// Sanitize a filename for safe filesystem use.
+/// - Strips path components (no directory traversal)
+/// - Removes null bytes, control chars, and filesystem-unsafe chars
+/// - Limits length to 200 bytes
+/// - Falls back to "attachment" if result is empty or a dot-file
+fn sanitize_filename(name: &str) -> String {
+    // Take only the last path component — strip any directory traversal
+    let base = name.rsplit(&['/', '\\'][..]).next().unwrap_or(name);
+
+    // Strip RFC 2047/2231 quoting artifacts
+    let unquoted = base.trim_matches('"').trim();
+
+    let sanitized: String = unquoted.chars()
+        .filter(|c| !c.is_control() && *c != '\0')
+        .map(|c| match c {
+            '/' | '\\' | ':' | '*' | '?' | '<' | '>' | '|' => '_',
+            _ => c,
+        })
+        .collect();
+
+    // Trim leading/trailing dots and spaces (Windows compat + hidden file prevention)
+    let trimmed = sanitized.trim_matches(&['.', ' '][..]);
+
+    // Limit length (preserve extension)
+    let result = if trimmed.len() > 200 {
+        if let Some(dot) = trimmed.rfind('.') {
+            let ext = &trimmed[dot..];
+            if ext.len() < 20 {
+                let stem_len = 200 - ext.len();
+                format!("{}{}", &trimmed[..stem_len], ext)
+            } else {
+                trimmed[..200].to_string()
+            }
+        } else {
+            trimmed[..200].to_string()
+        }
+    } else {
+        trimmed.to_string()
+    };
+
+    if result.is_empty() {
+        "attachment".to_string()
+    } else {
+        result
+    }
+}
+
+/// Generate a unique path — if file exists, append (1), (2), etc.
+fn unique_path(dir: &Path, name: &str) -> PathBuf {
+    let p = dir.join(name);
+    if !p.exists() { return p; }
+    let stem = Path::new(name).file_stem().and_then(|s| s.to_str()).unwrap_or(name);
+    let ext = Path::new(name).extension().and_then(|s| s.to_str()).unwrap_or("");
+    for i in 1..10000 {
+        let new_name = if ext.is_empty() {
+            format!("{} ({})", stem, i)
+        } else {
+            format!("{} ({}).{}", stem, i, ext)
+        };
+        let p = dir.join(&new_name);
+        if !p.exists() { return p; }
+    }
+    // Fallback: use a random suffix
+    let fallback = format!("{}_{}", stem, std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis());
+    dir.join(if ext.is_empty() { fallback } else { format!("{}.{}", fallback, ext) })
+}
+
+/// Get file extension for a MIME type.
+fn mime_ext(mime: &str) -> &str {
+    let lower = mime.to_ascii_lowercase();
+    if lower.contains("png") { "png" }
+    else if lower.contains("gif") { "gif" }
+    else if lower.contains("jpeg") || lower.contains("jpg") { "jpg" }
+    else if lower.contains("pdf") { "pdf" }
+    else if lower.contains("html") { "html" }
+    else if lower.contains("text") { "txt" }
+    else { "bin" }
 }
 
 /// Extract sender from From: header.

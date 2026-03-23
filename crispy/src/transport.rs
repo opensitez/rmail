@@ -356,6 +356,7 @@ const MAX_LINE_LEN: usize = 4096;
 /// and IMAP protocol modules.
 pub struct TcpTransport {
     hostname: String,
+    port: u16,
     security: SecurityMode,
     reader: Option<BufReader<Stream>>,
     writer: Option<Stream>,
@@ -371,6 +372,7 @@ impl TcpTransport {
     pub fn new() -> Self {
         TcpTransport {
             hostname: String::new(),
+            port: 0,
             security: SecurityMode::None,
             reader: Option::None,
             writer: Option::None,
@@ -553,6 +555,7 @@ impl Transport for TcpTransport {
         let tcp = TcpStream::connect(&addr)?;
 
         self.hostname = host.to_string();
+        self.port = port;
 
         // Apply timeouts
         if let Some(t) = self.read_timeout {
@@ -572,7 +575,17 @@ impl Transport for TcpTransport {
         };
 
         if security == SecurityMode::DirectTls {
-            self.setup_tls_from_tcp(tcp).map_err(io::Error::from)?;
+            match self.setup_tls_from_tcp(tcp) {
+                Ok(()) => {}
+                Err(TransportError::Tls(msg)) if msg.contains("retry connection") => {
+                    // User accepted cert — trusted_pem is now set. Reconnect and retry.
+                    let tcp2 = TcpStream::connect(&addr)?;
+                    if let Some(t) = self.read_timeout { tcp2.set_read_timeout(Some(t))?; }
+                    if let Some(t) = self.write_timeout { tcp2.set_write_timeout(Some(t))?; }
+                    self.setup_tls_from_tcp(tcp2).map_err(io::Error::from)?;
+                }
+                Err(e) => return Err(io::Error::from(e)),
+            }
         } else {
             self.setup_plain(tcp).map_err(io::Error::from)?;
         }
@@ -629,7 +642,18 @@ impl Transport for TcpTransport {
         // Drop the old writer
         self.writer.take();
 
-        self.setup_tls_from_tcp(tcp).map_err(io::Error::from)
+        match self.setup_tls_from_tcp(tcp) {
+            Ok(()) => Ok(()),
+            Err(TransportError::Tls(msg)) if msg.contains("retry connection") => {
+                // User accepted cert — trusted_pem is now set.
+                // For STARTTLS, we must reconnect TCP and redo TLS directly
+                // (the protocol layer will need to reconnect too).
+                // Signal the caller to retry the entire connection.
+                Err(io::Error::new(io::ErrorKind::ConnectionReset,
+                    "certificate accepted, please reconnect"))
+            }
+            Err(e) => Err(io::Error::from(e)),
+        }
     }
 
     fn close(&mut self) {

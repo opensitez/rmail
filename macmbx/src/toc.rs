@@ -279,17 +279,31 @@ impl Toc {
     }
 
     /// Open and read a TOC from disk.
+    /// If the .toc file is missing or corrupt, rebuilds from the mbox
+    /// (like original Eudora's CheckTOC → BuildTOC).
     pub fn open(mbox_path: impl AsRef<Path>) -> io::Result<Self> {
         let mbox = mbox_path.as_ref();
         let toc_path = mbox.with_extension("toc");
 
         if !toc_path.exists() {
+            // TOC missing — rebuild from mbox (like BuildTOC)
+            if mbox.exists() {
+                let mut toc = crate::build::build_toc(mbox)?;
+                toc.save()?;
+                return Ok(toc);
+            }
             return Err(io::Error::new(io::ErrorKind::NotFound,
-                format!("TOC not found: {}", toc_path.display())));
+                format!("mailbox not found: {}", mbox.display())));
         }
 
         let data = fs::read(&toc_path)?;
         if data.len() < DISK_HDR_SIZE {
+            // TOC corrupt — rebuild from mbox
+            if mbox.exists() {
+                let mut toc = crate::build::build_toc(mbox)?;
+                toc.save()?;
+                return Ok(toc);
+            }
             return Err(io::Error::new(io::ErrorKind::InvalidData, "TOC too small"));
         }
 
