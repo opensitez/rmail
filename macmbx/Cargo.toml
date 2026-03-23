@@ -1,0 +1,20 @@
+[package]
+name = "macmbx"
+version = "0.1.0"
+edition = "2021"
+description = "Standalone Eudora mbox storage library — TOC, filters, junk, nicknames, config, import/export"
+license = "BSD-3-Clause"
+
+[lib]
+name = "macmbx"
+crate-type = ["lib", "staticlib"]
+
+[dependencies]
+crispy = { path = "../crispy" }
+regex = "1"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3"
