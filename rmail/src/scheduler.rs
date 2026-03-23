@@ -285,31 +285,106 @@ pub fn start(mailer: std::sync::Arc<Mailer>, status_label: gtk4::Label, check_in
             NEED_CHECK.store(false, Ordering::Relaxed);
             CHECK_IN_PROGRESS.store(true, Ordering::Relaxed);
             status_label.set_text("Checking mail...");
-            let task_id = crate::tasks::add_task("mail-inbox-symbolic", "Checking mail...");
+
+            // Create per-account task lines (on main thread, like the C version)
             let m = mailer.clone();
+            let acct_count = 1 + m.count_accounts();
+            let mut task_ids: Vec<(i32, i32)> = Vec::new(); // (account_index, task_id)
+            for i in 0..acct_count {
+                if let Some(acct) = m.get_account_info(i) {
+                    if acct.enabled && !acct.server.is_empty() {
+                        let desc = format!("Checking {} ({})...",
+                            if acct.name.is_empty() { &acct.email } else { &acct.name },
+                            acct.server);
+                        let tid = crate::tasks::add_task("mail-inbox-symbolic", &desc);
+                        task_ids.push((i, tid));
+                    }
+                }
+            }
+            // Fallback if no per-account tasks (no accounts configured)
+            let fallback_tid = if task_ids.is_empty() {
+                Some(crate::tasks::add_task("mail-inbox-symbolic", "Checking mail..."))
+            } else {
+                None
+            };
+
             std::thread::spawn(move || {
-                let result = m.check();
+                // One thread per account, parallel — like macmbx_mailer_check
+                let task_map = Arc::new(task_ids);
+                let mut total = 0i32;
+
+                // Track which tasks succeeded vs failed
+                let failed_ids: Arc<Mutex<Vec<(i32, String)>>> = Arc::new(Mutex::new(Vec::new()));
+
+                if task_map.is_empty() {
+                    // No accounts — just run check() which handles it
+                    if let Ok(n) = m.check() {
+                        total = n;
+                    }
+                } else {
+                    std::thread::scope(|s| {
+                        let handles: Vec<_> = task_map.iter().map(|&(acct_idx, task_id)| {
+                            let mailer_ref = &m;
+                            let failed = failed_ids.clone();
+                            s.spawn(move || {
+                                let result = mailer_ref.check_account(acct_idx);
+                                match &result {
+                                    Ok(n) if *n > 0 => {
+                                        crate::tasks::update_task(task_id,
+                                            &format!("Done — {} message(s)", n));
+                                    }
+                                    Ok(_) => {
+                                        crate::tasks::update_task(task_id, "No new mail");
+                                    }
+                                    Err(e) => {
+                                        let msg = format!("Failed: {}", e);
+                                        crate::tasks::update_task(task_id, &msg);
+                                        failed.lock().unwrap().push((task_id, msg));
+                                    }
+                                }
+                                result
+                            })
+                        }).collect();
+
+                        for handle in handles {
+                            match handle.join() {
+                                Ok(Ok(n)) if n > 0 => total += n,
+                                _ => {}
+                            }
+                        }
+                    });
+                }
+
+                // Let results stay visible briefly before removing successful ones
+                std::thread::sleep(std::time::Duration::from_secs(2));
+
+                // Remove successful per-account tasks; keep failed as errors
+                let failed = failed_ids.lock().unwrap();
+                let failed_task_ids: Vec<i32> = failed.iter().map(|(id, _)| *id).collect();
+                for &(_, task_id) in task_map.iter() {
+                    if failed_task_ids.contains(&task_id) {
+                        // Convert to sticky error — remove task, add error
+                        crate::tasks::remove_task(task_id);
+                        if let Some((_, ref msg)) = failed.iter().find(|(id, _)| *id == task_id) {
+                            crate::tasks::add_error("dialog-error-symbolic", msg);
+                        }
+                    } else {
+                        crate::tasks::remove_task(task_id);
+                    }
+                }
+                if let Some(tid) = fallback_tid {
+                    crate::tasks::remove_task(tid);
+                }
+
                 CHECK_IN_PROGRESS.store(false, Ordering::Relaxed);
-                crate::tasks::remove_task(task_id);
-                let msg = match &result {
-                    Ok(n) if *n > 0 => {
-                        *STICKY_ERROR.lock().unwrap() = None;
-                        crate::tasks::add_task("mail-unread-symbolic", &format!("{} new message(s)", n));
-                        // Auto-remove the "new messages" line after 5s
-                        let done_id = crate::tasks::add_task("", "");
-                        crate::tasks::remove_task(done_id); // placeholder
-                        format!("{} new message(s)", n)
-                    }
-                    Ok(_) => {
-                        *STICKY_ERROR.lock().unwrap() = None;
-                        "No new mail".to_string()
-                    }
-                    Err(e) => {
-                        let err = format!("Check failed: {}", e);
-                        *STICKY_ERROR.lock().unwrap() = Some(err.clone());
-                        crate::tasks::add_error("dialog-error-symbolic", &err);
-                        err
-                    }
+                let msg = if total > 0 {
+                    *STICKY_ERROR.lock().unwrap() = None;
+                    crate::tasks::add_task("mail-unread-symbolic",
+                        &format!("{} new message(s)", total));
+                    format!("{} new message(s)", total)
+                } else {
+                    *STICKY_ERROR.lock().unwrap() = None;
+                    "No new mail".to_string()
                 };
                 *PENDING_STATUS.lock().unwrap() = Some(msg);
             });

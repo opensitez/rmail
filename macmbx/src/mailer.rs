@@ -287,6 +287,18 @@ impl Mailer {
         self.signature = if sig.is_empty() { None } else { Some(sig.to_string()) };
     }
 
+    // ── Public accessors ──
+
+    /// Get account info by index (0 = dominant, 1+ = personalities).
+    pub fn get_account_info(&self, index: i32) -> Option<Account> {
+        self.get_account(index)
+    }
+
+    /// Count of personality accounts (not including dominant).
+    pub fn count_accounts(&self) -> i32 {
+        self.conf.count_accounts()
+    }
+
     // ── Helpers ──
 
     fn progress(&self, status: &str, cur: i32, total: i32) {
@@ -664,30 +676,45 @@ impl Mailer {
     // ══════════════════════════════════════════════════════════════
 
     /// Check mail for all accounts in parallel.
+    /// One thread per account, like the C macmbx_mailer_check.
     /// Returns total new message count.
     pub fn check(&self) -> io::Result<i32> {
         let acct_count = self.conf.count_accounts();
         let total_accounts = 1 + acct_count;
-        // Collect results from parallel checks
-        // For simplicity, we run sequentially (the C version used pthreads).
-        // A real threaded implementation would use the factory to create sessions per-thread.
-        let mut total = 0i32;
+
+        // Collect enabled account indices
+        let mut accounts: Vec<(i32, String)> = Vec::new();
         for i in 0..total_accounts {
             if let Some(acct) = self.get_account(i) {
-                if !acct.enabled || acct.server.is_empty() {
-                    continue;
-                }
-                self.progress(
-                    if acct.name.is_empty() { "Checking mail..." } else { &acct.name },
-                    i,
-                    total_accounts,
-                );
-                match self.check_account(i) {
-                    Ok(n) if n > 0 => total += n,
-                    _ => {}
+                if acct.enabled && !acct.server.is_empty() {
+                    accounts.push((i, if acct.name.is_empty() { "Checking mail...".into() } else { acct.name }));
                 }
             }
         }
+
+        if accounts.is_empty() {
+            return Ok(0);
+        }
+
+        // Launch one thread per account using scoped threads (borrows &self)
+        let mut total = 0i32;
+        thread::scope(|s| {
+            let handles: Vec<_> = accounts.iter().map(|(idx, name)| {
+                let account_index = *idx;
+                self.progress(name, account_index, total_accounts);
+                s.spawn(move || {
+                    self.check_account(account_index)
+                })
+            }).collect();
+
+            for handle in handles {
+                match handle.join() {
+                    Ok(Ok(n)) if n > 0 => total += n,
+                    _ => {}
+                }
+            }
+        });
+
         Ok(total)
     }
 
