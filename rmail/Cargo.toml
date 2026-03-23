@@ -1,0 +1,31 @@
+[package]
+name = "rmail"
+version = "0.1.0"
+edition = "2021"
+description = "Eudora mail client — GTK4 Rust port"
+license = "BSD-3-Clause"
+
+[[bin]]
+name = "rmail"
+path = "src/main.rs"
+
+[dependencies]
+crispy = { path = "../crispy" }
+macmbx = { path = "../macmbx" }
+reditctrl = { path = "../reditctrl" }
+
+gtk4 = { version = "0.9", features = ["v4_10"] }
+gdk4 = "0.9"
+glib = "0.20"
+gio = "0.20"
+pango = "0.20"
+cairo-rs = "0.20"
+pangocairo = "0.20"
+gdk-pixbuf = "0.20"
+
+log = "0.4"
+env_logger = "0.11"
+libc = "0.2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "2"
