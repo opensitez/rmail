@@ -894,6 +894,22 @@ fn build_ui(app: &gtk4::Application) {
                 Some(Box::new(move |updated: &macmbx::conf::Conf| {
                     // Sync saved settings to the mailer's shared conf
                     *conf_shared.lock().unwrap() = updated.clone();
+                    // Push updated ColumnConfig to all open mailbox tabs immediately
+                    let col_config = rwidgets::mail_list::ColumnConfig {
+                        status:      updated.get_bool("mailbox_display", "show_col_status", true),
+                        priority:    updated.get_bool("mailbox_display", "show_col_priority", true),
+                        attachments: updated.get_bool("mailbox_display", "show_col_attachments", true),
+                        label:       updated.get_bool("mailbox_display", "show_col_label", true),
+                        who:         updated.get_bool("mailbox_display", "show_col_who", true),
+                        date:        updated.get_bool("mailbox_display", "show_col_date", true),
+                        size:        updated.get_bool("mailbox_display", "show_col_size", true),
+                        server:      updated.get_bool("mailbox_display", "show_col_server", false),
+                        mood:        updated.get_bool("mailbox_display", "show_col_mood", false),
+                        junk:        updated.get_bool("mailbox_display", "show_col_junk", false),
+                    };
+                    MAIL_LIST_REGISTRY.with(|reg| {
+                        reg.borrow().iter().for_each(|ml| ml.set_column_config(col_config.clone()));
+                    });
                 })));
         });
         app.add_action(&pref_action);
@@ -1161,10 +1177,10 @@ fn build_ui(app: &gtk4::Application) {
             let st = state.clone();
             reply_action.connect_activate(move |_, _| {
                 let sel = get_selected_msg(&nb);
-                if let Some((mbox_path, idx, _tree, _iter)) = sel {
+                if let Some((mbox_path, idx)) = sel {
                     if let Ok(toc) = macmbx::toc::Toc::open(&mbox_path) {
                         if let Ok(raw) = macmbx::ops::read_message(&toc, idx as usize) {
-                            let text = String::from_utf8_lossy(&raw);
+                            let text = decode_message(&raw);
                             let reply_to = macmbx::ops::read_header_field(&toc, idx as usize, "Reply-To")
                                 .ok().flatten()
                                 .or_else(|| Some(toc.msgs[idx as usize].from.clone()))
@@ -1200,10 +1216,10 @@ fn build_ui(app: &gtk4::Application) {
             let st = state.clone();
             reply_all_action.connect_activate(move |_, _| {
                 let sel = get_selected_msg(&nb);
-                if let Some((mbox_path, idx, _tree, _iter)) = sel {
+                if let Some((mbox_path, idx)) = sel {
                     if let Ok(toc) = macmbx::toc::Toc::open(&mbox_path) {
                         if let Ok(raw) = macmbx::ops::read_message(&toc, idx as usize) {
-                            let text = String::from_utf8_lossy(&raw);
+                            let text = decode_message(&raw);
                             let reply_to = macmbx::ops::read_header_field(&toc, idx as usize, "Reply-To")
                                 .ok().flatten()
                                 .or_else(|| Some(toc.msgs[idx as usize].from.clone()))
@@ -1249,10 +1265,10 @@ fn build_ui(app: &gtk4::Application) {
             let st = state.clone();
             fwd_action.connect_activate(move |_, _| {
                 let sel = get_selected_msg(&nb);
-                if let Some((mbox_path, idx, _tree, _iter)) = sel {
+                if let Some((mbox_path, idx)) = sel {
                     if let Ok(toc) = macmbx::toc::Toc::open(&mbox_path) {
                         if let Ok(raw) = macmbx::ops::read_message(&toc, idx as usize) {
-                            let text = String::from_utf8_lossy(&raw);
+                            let text = decode_message(&raw);
                             let sum = &toc.msgs[idx as usize];
                             let body = find_body(&text);
                             let fwd_body = format!(
@@ -1279,10 +1295,10 @@ fn build_ui(app: &gtk4::Application) {
             let st = state.clone();
             redir_action.connect_activate(move |_, _| {
                 let sel = get_selected_msg(&nb);
-                if let Some((mbox_path, idx, _tree, _iter)) = sel {
+                if let Some((mbox_path, idx)) = sel {
                     if let Ok(toc) = macmbx::toc::Toc::open(&mbox_path) {
                         if let Ok(raw) = macmbx::ops::read_message(&toc, idx as usize) {
-                            let text = String::from_utf8_lossy(&raw);
+                            let text = decode_message(&raw);
                             let s = st.borrow();
                             let data = compose::ComposeData::from_raw(&text);
                             let page = compose::build_compose_tab_with_data(&s.conf.borrow(), &data, s.mailer.clone(), s.books.clone());
@@ -1301,7 +1317,7 @@ fn build_ui(app: &gtk4::Application) {
             let st = state.clone();
             mf_action.connect_activate(move |_, _| {
                 let sel = get_selected_msg(&nb);
-                if let Some((mbox_path, idx, tree, _iter)) = sel {
+                if let Some((mbox_path, idx)) = sel {
                     if let Ok(toc) = macmbx::toc::Toc::open(&mbox_path) {
                         let msg = &toc.msgs[idx as usize];
                         let from = msg.from.clone();
@@ -1325,7 +1341,7 @@ fn build_ui(app: &gtk4::Application) {
                             }).collect())
                             .unwrap_or_else(|_| vec!["In".into(), "Out".into(), "Trash".into(), "Junk".into()]);
                         makefilter::show_make_filter_dialog(
-                            tree.upcast_ref(), &from, &subj, &filter_path, mailboxes);
+                            nb.upcast_ref(), &from, &subj, &filter_path, mailboxes);
                     }
                 }
             });
@@ -1338,18 +1354,12 @@ fn build_ui(app: &gtk4::Application) {
             let nb = content_notebook.clone();
             del_action.connect_activate(move |_, _| {
                 let sel = get_selected_msg(&nb);
-                if let Some((mbox_path, idx, tree, iter)) = sel {
+                if let Some((mbox_path, idx)) = sel {
                     // Mark deleted in TOC
                     if let Ok(mut toc) = macmbx::toc::Toc::open(&mbox_path) {
                         if (idx as usize) < toc.msgs.len() {
                             toc.msgs[idx as usize].flags.insert(macmbx::toc::MsgFlags::DELETED);
                             let _ = toc.save();
-                        }
-                    }
-                    // Remove from visible list
-                    if let Some(model) = tree.model() {
-                        if let Ok(store) = model.downcast::<gtk4::ListStore>() {
-                            store.remove(&iter);
                         }
                     }
                 }
@@ -1364,10 +1374,10 @@ fn build_ui(app: &gtk4::Application) {
             let win_for_print = window.clone();
             print_action.connect_activate(move |_, _| {
                 let sel = get_selected_msg(&nb);
-                if let Some((mbox_path, idx, _tree, _iter)) = sel {
+                if let Some((mbox_path, idx)) = sel {
                     if let Ok(toc) = macmbx::toc::Toc::open(&mbox_path) {
                         if let Ok(raw) = macmbx::ops::read_message(&toc, idx as usize) {
-                            let raw_str = String::from_utf8_lossy(&raw);
+                            let raw_str = decode_message(&raw);
 
                             // Build print doc with headers + styled body (images resolved)
                             let doc = reditctrl::document::Document::new();
@@ -1438,7 +1448,7 @@ fn build_ui(app: &gtk4::Application) {
             let dest = dest_name.to_string();
             action.connect_activate(move |_, _| {
                 let sel = get_selected_msg(&nb);
-                if let Some((mbox_path, idx, tree, iter)) = sel {
+                if let Some((mbox_path, idx)) = sel {
                     let dest_path = st.borrow().data_dir.join("mailboxes").join(&dest);
                     if let Ok(mut src_toc) = macmbx::toc::Toc::open(&mbox_path) {
                         if let Ok(mut dst_toc) = macmbx::toc::Toc::open_or_create(&dest_path) {
@@ -1451,12 +1461,6 @@ fn build_ui(app: &gtk4::Application) {
                                     st.borrow_mut().xf_undo.clear();
                                     st.borrow_mut().xf_undo.record(
                                         Path::new(&mbox_path), &dest_path, msg_hash, dst_idx);
-                                    // Remove from visible list
-                                    if let Some(model) = tree.model() {
-                                        if let Ok(store) = model.downcast::<gtk4::ListStore>() {
-                                            store.remove(&iter);
-                                        }
-                                    }
                                 }
                                 Err(e) => eprintln!("rMail: transfer failed: {}", e),
                             }
@@ -1475,7 +1479,7 @@ fn build_ui(app: &gtk4::Application) {
             let sa = gio::SimpleAction::new("save-as", None);
             let nb = content_notebook.clone();
             sa.connect_activate(move |_, _| {
-                if let Some((mbox_path, idx, _, _)) = get_selected_msg(&nb) {
+                if let Some((mbox_path, idx)) = get_selected_msg(&nb) {
                     if let Ok(toc) = macmbx::toc::Toc::open(&mbox_path) {
                         if let Ok(raw) = macmbx::ops::read_message(&toc, idx as usize) {
                             let subj = &toc.msgs[idx as usize].subject;
@@ -1513,7 +1517,7 @@ fn build_ui(app: &gtk4::Application) {
             let is_junk = *action_name == "mark-junk";
             let is_not_junk = *action_name == "mark-not-junk";
             action.connect_activate(move |_, _| {
-                if let Some((mbox_path, idx, tree, iter)) = get_selected_msg(&nb) {
+                if let Some((mbox_path, idx)) = get_selected_msg(&nb) {
                     if let Ok(mut toc) = macmbx::toc::Toc::open(&mbox_path) {
                         if (idx as usize) < toc.msgs.len() {
                             toc.msgs[idx as usize].state = state_val;
@@ -1524,20 +1528,6 @@ fn build_ui(app: &gtk4::Application) {
                                 toc.msgs[idx as usize].spam_score = 0;
                             }
                             let _ = toc.save();
-                            // Update visible weight (bold for unread)
-                            if let Some(model) = tree.model() {
-                                if let Ok(store) = model.downcast::<gtk4::ListStore>() {
-                                    let weight = if state_val == macmbx::toc::State::Unread { 700i32 } else { 400i32 };
-                                    store.set(&iter, &[(7, &weight)]);
-                                    // Update status icon
-                                    let icon = match state_val {
-                                        macmbx::toc::State::Unread => "●",
-                                        macmbx::toc::State::Read => "",
-                                        _ => "",
-                                    };
-                                    store.set(&iter, &[(1, &icon)]);
-                                }
-                            }
                         }
                     }
                 }
@@ -1987,14 +1977,19 @@ fn build_ui(app: &gtk4::Application) {
         *theme_idx.borrow_mut() = initial;
         apply_theme(initial, &theme_provider.borrow(), &win);
         apply_sidebar_theme(initial, &sidebar);
+        rwidgets::mail_list::set_global_theme(mail_list_theme_from_palette(initial));
 
         let conf_for_theme = state.borrow().conf.clone();
         let sb_for_theme = sidebar.clone();
+        let nb_for_theme = content_notebook.clone();
         theme_btn.connect_clicked(move |_| {
             let mut idx = theme_idx.borrow_mut();
             *idx = (*idx + 1) % THEME_COUNT;
             apply_theme(*idx, &theme_provider.borrow(), &win);
             apply_sidebar_theme(*idx, &sb_for_theme);
+            // Update all open mail list tabs
+            rwidgets::mail_list::set_global_theme(mail_list_theme_from_palette(*idx));
+            apply_mail_list_theme_all(*idx, &nb_for_theme);
             // Persist theme choice
             conf_for_theme.borrow_mut().set_int("theme", "active_theme", *idx as i64);
             let _ = conf_for_theme.borrow_mut().save();
@@ -2177,6 +2172,74 @@ fn build_ui(app: &gtk4::Application) {
     }
 
     window.present();
+
+    // ── Global Drag & Drop Callback ──
+    {
+        let nb_drag = content_notebook.clone();
+        let open_drag = open_mailbox_tab.clone();
+        rwidgets::drag_state::set_drop_callback(move |src_path, indices, dst_path| {
+            let mut src_toc = match macmbx::toc::Toc::open(src_path) {
+                Ok(t) => t,
+                Err(_) => return,
+            };
+            let mut dst_toc = match macmbx::toc::Toc::open_or_create(
+                std::path::Path::new(dst_path))
+            {
+                Ok(t) => t,
+                Err(_) => return,
+            };
+            let mut sorted = indices;
+            sorted.sort_unstable();
+            sorted.reverse();
+            let mut count = 0;
+            for idx in &sorted {
+                if macmbx::ops::transfer(&mut src_toc, *idx, &mut dst_toc, false).is_ok() {
+                    count += 1;
+                }
+            }
+            if count > 0 {
+                let _ = src_toc.save();
+                let _ = dst_toc.save();
+                eprintln!("rMail: transferred {} message(s) from {} to {}", count, src_path, dst_path);
+                
+                // Refresh the source tab if it is open
+                let n = nb_drag.n_pages();
+                for i in (0..n).rev() {
+                    let page = nb_drag.nth_page(Some(i)).unwrap();
+                    if page.widget_name() == src_path {
+                        if let Some(tab_label) = nb_drag.tab_label(&page) {
+                            if let Some(lbl) = tab_label.first_child() {
+                                if let Ok(l) = lbl.downcast::<gtk4::Label>() {
+                                    let title = l.text().to_string();
+                                    nb_drag.remove_page(Some(i));
+                                    open_drag(src_path, &title);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // Also refresh the destination tab if it is currently open
+                let n = nb_drag.n_pages();
+                for i in (0..n).rev() {
+                    let page = nb_drag.nth_page(Some(i)).unwrap();
+                    if page.widget_name() == dst_path {
+                        if let Some(tab_label) = nb_drag.tab_label(&page) {
+                            if let Some(lbl) = tab_label.first_child() {
+                                if let Ok(l) = lbl.downcast::<gtk4::Label>() {
+                                    let title = l.text().to_string();
+                                    nb_drag.remove_page(Some(i));
+                                    open_drag(dst_path, &title);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
 
     // ── Start the mail scheduler (port of IdleSchedulerStart) ──
     let check_interval = state.borrow().conf.borrow()
@@ -2546,23 +2609,29 @@ fn create_welcome_page(state: &AppState) -> gtk4::Widget {
 /// Build a mailbox tab showing real messages from TOC.
 /// Double-clicking a message opens it in a new tab in the content notebook.
 /// Get the currently selected message from the active mailbox tab.
-/// Returns (mbox_path, msg_index, tree, iter).
-fn get_selected_msg(nb: &gtk4::Notebook) -> Option<(String, i32, gtk4::TreeView, gtk4::TreeIter)> {
+/// Returns (mbox_path, msg_index).
+fn get_selected_msg(nb: &gtk4::Notebook) -> Option<(String, i32)> {
     let page_idx = nb.current_page()?;
     let page = nb.nth_page(Some(page_idx))?;
     let paned = page.downcast_ref::<gtk4::Paned>()?;
     let mbox_path = paned.widget_name().to_string();
     if mbox_path.is_empty() { return None; }
-    let scroll = paned.start_child()?.downcast::<gtk4::ScrolledWindow>().ok()?;
-    let tree = scroll.child()?.downcast::<gtk4::TreeView>().ok()?;
-    let sel = tree.selection();
-    // Works with both Single and Multiple selection modes
-    let (rows, model) = sel.selected_rows();
-    if rows.len() != 1 { return None; } // only act on single selection
-    let iter = model.iter(&rows[0])?;
-    let idx: i32 = model.get(&iter, 0);
-    Some((mbox_path, idx, tree, iter))
+    // Read from the shared selected_msg state set by MailListWidget's on_selection_changed
+    // The mbox_path is stored on the paned widget_name; the selected index comes from
+    // the SELECTED_MSG global which is updated by the mail list callback.
+    let idx = SELECTED_MSG_IDX.load(std::sync::atomic::Ordering::Relaxed);
+    let path = SELECTED_MSG_PATH.with(|p| p.borrow().clone());
+    if path != mbox_path || idx < 0 { return None; }
+    Some((mbox_path, idx))
 }
+
+// Global selected message state (updated by MailListWidget on_selection_changed)
+thread_local! {
+    static SELECTED_MSG_PATH: RefCell<String> = RefCell::new(String::new());
+    /// Registry of all open MailListWidgets, for live column config refresh.
+    static MAIL_LIST_REGISTRY: RefCell<Vec<Rc<rwidgets::mail_list::MailListWidget>>> = RefCell::new(Vec::new());
+}
+static SELECTED_MSG_IDX: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
 
 /// Open a compose tab with the given page widget and title.
 fn open_compose_tab(nb: &gtk4::Notebook, page: &gtk4::Widget, title: &str) {
@@ -2610,29 +2679,13 @@ fn build_mailbox_tab(
     vpaned.set_widget_name(mbox_path);
     vpaned.set_hexpand(true);
 
-    // ── Message list ──
-    let store = gtk4::ListStore::new(&[
-        glib::Type::I32,     // 0: index
-        glib::Type::STRING,  // 1: status icon
-        glib::Type::STRING,  // 2: priority
-        glib::Type::STRING,  // 3: from
-        glib::Type::STRING,  // 4: date
-        glib::Type::STRING,  // 5: size
-        glib::Type::STRING,  // 6: subject
-        glib::Type::I32,     // 7: font weight (bold for unread)
-        glib::Type::STRING,  // 8: label color (e.g. "#FF0000", empty = none)
-        glib::Type::STRING,  // 9: priority color
-    ]);
-
-    // Label colors — read from conf settings, fallback to Eudora defaults
-    // (port of mailbox.c label_color_str which reads from prefs)
+    // ── Message list (modern card-style, port of TreeView) ──
     let default_colors = ["", "#FF0000", "#0000FF", "#009900", "#990099",
                            "#FF8000", "#009999", "#666666"];
     let label_colors: Vec<String> = (0..8).map(|i| {
         if i == 0 { return String::new(); }
         let key = format!("color_{}", i - 1);
         if let Some(val) = conf.borrow().get("labels", &key) {
-            // Stored as "r,g,b" (0.0-1.0) — convert to hex
             let parts: Vec<f64> = val.split(',').filter_map(|s| s.trim().parse().ok()).collect();
             if parts.len() >= 3 {
                 return format!("#{:02X}{:02X}{:02X}",
@@ -2641,214 +2694,54 @@ fn build_mailbox_tab(
         }
         default_colors[i].to_string()
     }).collect();
-    let label_colors_ref: Vec<&str> = label_colors.iter().map(|s| s.as_str()).collect();
 
-    // Populate from real TOC data
-    for (i, msg) in toc.msgs.iter().enumerate() {
-        // Status icon — port of mailbox.c state_str()
-        let state_icon = match msg.state {
-            macmbx::toc::State::Unread => "●",       // filled circle
-            macmbx::toc::State::Read => "",
-            macmbx::toc::State::Replied => "↩",
-            macmbx::toc::State::Forwarded => "→",
-            macmbx::toc::State::Redirected => "⇉",
-            macmbx::toc::State::Unsendable => "✏",
-            macmbx::toc::State::Sendable => "✓",
-            macmbx::toc::State::Queued => "⏳",
-            macmbx::toc::State::Sent => "✉",
-            macmbx::toc::State::Unsent => "✏",
-            macmbx::toc::State::Timed => "⏰",
-            macmbx::toc::State::BusySending => "⇧",
-            macmbx::toc::State::MesgErr => "⚠",
-            _ => "",
-        };
-
-        // Priority — port of mailbox.c priority_str()
-        let pri = match msg.priority {
-            1 => "↑↑",  // Highest
-            2 => "↑",   // High
-            3 => "",     // Normal
-            4 => "↓",   // Low
-            5 => "↓↓",  // Lowest
-            _ => "",
-        };
-
-        // Priority color — red for high, blue for low
-        let pri_color = match msg.priority {
-            1 => "#e53e3e",
-            2 => "#dd6b20",
-            4 => "#3182ce",
-            5 => "#2f855a",
-            _ => "",
-        };
-
-        // Label color from flags (using macmbx MsgFlags::label())
+    // Build MsgRow data from TOC
+    let msg_rows: Vec<rwidgets::mail_list::MsgRow> = toc.msgs.iter().enumerate().filter_map(|(i, msg)| {
+        if msg.flags.contains(macmbx::toc::MsgFlags::DELETED) { return None; }
         let label = msg.flags.label() as usize;
-        let label_color = if label > 0 && label < label_colors_ref.len() {
-            label_colors_ref[label]
-        } else { "" };
+        let label_color = if label > 0 && label < label_colors.len() {
+            label_colors[label].clone()
+        } else { String::new() };
+        let date_str = if msg.seconds > 0 { format_epoch(msg.seconds as i64) } else { String::new() };
+        let size_str = if msg.length > 1024 { format!("{}K", msg.length / 1024) }
+                       else { format!("{}", msg.length) };
+        Some(rwidgets::mail_list::MsgRow {
+            index: i as i32,
+            from: msg.from.clone(),
+            subject: msg.subject.clone(),
+            date: date_str,
+            size: size_str,
+            unread: msg.state == macmbx::toc::State::Unread,
+            priority: msg.priority as i8,
+            label_color,
+        })
+    }).collect();
 
-        // Format date from epoch seconds
-        let date_str = if msg.seconds > 0 {
-            format_epoch(msg.seconds as i64)
-        } else {
-            String::new()
-        };
+    let mail_list = Rc::new(rwidgets::mail_list::build_mail_list(mbox_path, msg_rows));
+    
+    // Apply user chosen columns from settings
+    let c = conf.borrow();
+    let col_config = rwidgets::mail_list::ColumnConfig {
+        status: c.get_bool("mailbox_display", "show_col_status", true),
+        priority: c.get_bool("mailbox_display", "show_col_priority", true),
+        attachments: c.get_bool("mailbox_display", "show_col_attachments", true),
+        label: c.get_bool("mailbox_display", "show_col_label", true),
+        who: c.get_bool("mailbox_display", "show_col_who", true),
+        date: c.get_bool("mailbox_display", "show_col_date", true),
+        size: c.get_bool("mailbox_display", "show_col_size", true),
+        server: c.get_bool("mailbox_display", "show_col_server", false),
+        mood: c.get_bool("mailbox_display", "show_col_mood", false),
+        junk: c.get_bool("mailbox_display", "show_col_junk", false),
+    };
+    mail_list.set_column_config(col_config);
 
-        // Format size
-        let size_str = if msg.length > 1024 {
-            format!("{}K", msg.length / 1024)
-        } else {
-            format!("{}", msg.length)
-        };
+    // Register so pref_action can push ColumnConfig updates in real-time
+    let ml_rc = mail_list.clone();
+    MAIL_LIST_REGISTRY.with(|reg| reg.borrow_mut().push(ml_rc));
 
-        let weight = if msg.state == macmbx::toc::State::Unread { 700 } else { 400 };
-
-        let iter = store.append();
-        store.set(&iter, &[
-            (0, &(i as i32)),
-            (1, &state_icon),
-            (2, &pri),
-            (3, &msg.from),
-            (4, &date_str),
-            (5, &size_str),
-            (6, &msg.subject),
-            (7, &weight),
-            (8, &label_color),
-            (9, &pri_color),
-        ]);
-    }
-
-    let tree = gtk4::TreeView::with_model(&store);
-    tree.set_headers_visible(true);
-    tree.selection().set_mode(gtk4::SelectionMode::Multiple);
-    tree.set_rubber_banding(true);
-
-    // Columns
-    // Status column — colored ● for unread
-    {
-        let r = gtk4::CellRendererText::new();
-        let col = gtk4::TreeViewColumn::new();
-        col.set_title("");
-        col.pack_start(&r, true);
-        col.add_attribute(&r, "text", 1);
-        col.set_fixed_width(28);
-        col.set_sort_column_id(1);
-        // Color the status icon blue for unread
-        col.set_cell_data_func(&r,|_col: &gtk4::TreeViewColumn, cell: &gtk4::CellRenderer, model: &gtk4::TreeModel, iter: &gtk4::TreeIter| {
-            let text: String = model.get(iter, 1);
-            if let Some(cr) = cell.downcast_ref::<gtk4::CellRendererText>() {
-                if text == "●" {
-                    cr.set_foreground(Some("#2563eb"));
-                    cr.set_property("foreground-set", true);
-                } else {
-                    cr.set_property("foreground-set", false);
-                }
-            }
-        });
-        tree.append_column(&col);
-    }
-
-    // Priority column — colored arrows
-    {
-        let r = gtk4::CellRendererText::new();
-        let col = gtk4::TreeViewColumn::new();
-        col.set_title("!");
-        col.pack_start(&r, true);
-        col.add_attribute(&r, "text", 2);
-        col.set_fixed_width(28);
-        col.set_sort_column_id(2);
-        // Apply priority color from column 9
-        col.set_cell_data_func(&r,|_col: &gtk4::TreeViewColumn, cell: &gtk4::CellRenderer, model: &gtk4::TreeModel, iter: &gtk4::TreeIter| {
-            let color: String = model.get(iter, 9);
-            if let Some(cr) = cell.downcast_ref::<gtk4::CellRendererText>() {
-                if !color.is_empty() {
-                    cr.set_foreground(Some(&color));
-                    cr.set_property("foreground-set", true);
-                } else {
-                    cr.set_property("foreground-set", false);
-                }
-            }
-        });
-        tree.append_column(&col);
-    }
-
-    // From, Date, Size, Subject — apply label color from column 8
-    for &(title, col_idx, width) in &[
-        ("From", 3i32, 180i32),
-        ("Date", 4, 100),
-        ("Size", 5, 60),
-        ("Subject", 6, -1),
-    ] {
-        let renderer = gtk4::CellRendererText::new();
-        let col = gtk4::TreeViewColumn::new();
-        col.set_title(title);
-        col.pack_start(&renderer, true);
-        col.add_attribute(&renderer, "text", col_idx);
-        col.add_attribute(&renderer, "weight", 7);
-        col.set_resizable(true);
-        if width > 0 {
-            col.set_fixed_width(width);
-        } else {
-            col.set_expand(true);
-        }
-        col.set_sort_column_id(col_idx);
-        // Apply label color (port of label_color_cell_func)
-        col.set_cell_data_func(&renderer,|_col: &gtk4::TreeViewColumn, cell: &gtk4::CellRenderer, model: &gtk4::TreeModel, iter: &gtk4::TreeIter| {
-            let color: String = model.get(iter, 8);
-            if let Some(cr) = cell.downcast_ref::<gtk4::CellRendererText>() {
-                if !color.is_empty() {
-                    cr.set_foreground(Some(&color));
-                    cr.set_property("foreground-set", true);
-                } else {
-                    cr.set_property("foreground-set", false);
-                }
-            }
-        });
-        tree.append_column(&col);
-    }
-
-    // ── Right-click context menu on message list ──
-    {
-        let gesture = gtk4::GestureClick::new();
-        gesture.set_button(3); // right click only
-        let tree_for_ctx = tree.clone();
-        gesture.connect_pressed(move |_g, _n, x, y| {
-            let menu = gio::Menu::new();
-            menu.append(Some("Reply"), Some("app.reply"));
-            menu.append(Some("Reply All"), Some("app.reply-all"));
-            menu.append(Some("Forward"), Some("app.forward"));
-            menu.append(Some("Redirect"), Some("app.redirect"));
-            menu.append_section(None, &{
-                let s = gio::Menu::new();
-                s.append(Some("Delete"), Some("app.delete"));
-                s
-            });
-            let transfer = gio::Menu::new();
-            transfer.append(Some("→ In"), Some("app.transfer-in"));
-            transfer.append(Some("→ Out"), Some("app.transfer-out"));
-            transfer.append(Some("→ Trash"), Some("app.transfer-trash"));
-            menu.append_submenu(Some("Transfer"), &transfer);
-
-            let popover = gtk4::PopoverMenu::from_model(Some(&menu));
-            popover.set_parent(&tree_for_ctx);
-            popover.set_has_arrow(false);
-            let rect = gtk4::gdk::Rectangle::new(x as i32, y as i32, 1, 1);
-            popover.set_pointing_to(Some(&rect));
-            popover.popup();
-        });
-        tree.add_controller(gesture);
-    }
-
-    let scroll = gtk4::ScrolledWindow::builder()
-        .child(&tree)
-        .vexpand(true)
-        .build();
-    vpaned.set_start_child(Some(&scroll));
-    // NOTE: Drag-and-drop from message list to sidebar is deferred to the
-    // custom list widget rewrite. GTK4 DragSource conflicts with TreeView's
-    // internal gesture handling. Message transfer works via Transfer menu,
-    // right-click context menu, and keyboard shortcuts.
+    mail_list.set_theme(mail_list_theme_from_palette(
+        CURRENT_THEME.load(std::sync::atomic::Ordering::Relaxed)));
+    vpaned.set_start_child(Some(&mail_list.widget));
 
     // ── Preview pane ──
     let preview_box = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
@@ -2868,55 +2761,22 @@ fn build_mailbox_tab(
         .build();
     vpaned.set_end_child(Some(&preview_scroll));
 
-    // ── Selection → preview (port of main_eudora.c create_message_view) ──
+    // ── Selection → preview (wired via MailListWidget callback) ──
     {
         let toc = Rc::new(macmbx::toc::Toc::open(mbox_path)
             .unwrap_or_else(|_| macmbx::toc::Toc::new(mbox_path)));
         let pbox = preview_box.clone();
-        let conf = conf.clone();
-        let sel = tree.selection();
-        sel.connect_changed(move |sel| {
-            // Only show preview when exactly one message is selected
-            let (rows, model) = sel.selected_rows();
-            if rows.len() != 1 { return; }
-            let iter = match model.iter(&rows[0]) {
-                Some(i) => i,
-                None => return,
-            };
-            let idx: i32 = model.get(&iter, 0);
-
-            // Auto-mark read after delay (port of boxact.c mark_read_on_preview)
-            let mark_delay = conf.borrow()
-                .get_int("mailbox_display", "mark_read_delay", 0);
-            if mark_delay > 0 && (idx as usize) < toc.msgs.len()
-                && toc.msgs[idx as usize].state == macmbx::toc::State::Unread
-            {
-                let mbox = toc.mbox_path.clone();
-                let msg_idx = idx as usize;
-                let model_ref = model.clone();
-                let iter_ref = iter.clone();
-                glib::timeout_add_local_once(
-                    std::time::Duration::from_secs(mark_delay as u64),
-                    move || {
-                        if let Ok(mut t) = macmbx::toc::Toc::open(&mbox) {
-                            if msg_idx < t.msgs.len() && t.msgs[msg_idx].state == macmbx::toc::State::Unread {
-                                t.msgs[msg_idx].state = macmbx::toc::State::Read;
-                                let _ = t.save();
-                                // Update list visual
-                                if let Ok(store) = model_ref.downcast::<gtk4::ListStore>() {
-                                    store.set(&iter_ref, &[(7, &400i32), (1, &"")]);
-                                }
-                            }
-                        }
-                    },
-                );
-            }
-
+        *mail_list.on_selection_changed.borrow_mut() = Some(Box::new(move |mbox: &str, indices: &[i32]| {
+            SELECTED_MSG_PATH.with(|p| *p.borrow_mut() = mbox.to_string());
+            SELECTED_MSG_IDX.store(if indices.len() == 1 { indices[0] } else { -1 }, std::sync::atomic::Ordering::Relaxed);
+            if indices.len() != 1 { return; }
+            let idx = indices[0];
             match macmbx::ops::read_message(&toc, idx as usize) {
                 Ok(raw) => {
-                    let text = String::from_utf8_lossy(&raw);
-                    let view = create_message_view(&text, 8000);
-                    // Replace preview content
+                    // Use decode_message for charset handling (QP/base64
+                    // decoded later by create_message_view's MIME parser)
+                    let text = decode_message(&raw);
+                    let view = create_message_view(&text, 0);
                     while let Some(c) = pbox.first_child() { pbox.remove(&c); }
                     pbox.append(&view);
                 }
@@ -2927,161 +2787,53 @@ fn build_mailbox_tab(
                     pbox.append(&err);
                 }
             }
-        });
+        }));
     }
 
     // ── Right-click context menu on message list ──
-    // (port of boxact.c message context menu — Make Filter, Mark, Delete, Transfer)
+    // Uses the widget's on_right_click callback to show a native PopoverMenu.
     {
-        let toc_ctx = Rc::new(macmbx::toc::Toc::open(mbox_path)
-            .unwrap_or_else(|_| macmbx::toc::Toc::new(mbox_path)));
-        let tree_ctx = tree.clone();
-        let mbox_ctx = mbox_path.to_string();
-        let conf_ctx = conf.clone();
-        let gesture = gtk4::GestureClick::new();
-        gesture.set_button(3);
-        gesture.connect_released(move |g, _n, x, y| {
-            let Some(widget) = g.widget() else { return };
-            let Some(tv) = widget.downcast_ref::<gtk4::TreeView>() else { return };
-
-            // Select the row under cursor
-            if let Some((Some(path), _, _, _)) = tv.path_at_pos(x as i32, y as i32) {
-                tv.selection().select_path(&path);
-            }
-
-            // Get selected message
-            let (rows, model) = tv.selection().selected_rows();
-            if rows.is_empty() { return; }
-            let iter = match model.iter(&rows[0]) {
-                Some(i) => i,
-                None => return,
-            };
-            let idx: i32 = model.get(&iter, 0);
-            let from_text: String = model.get(&iter, 3);
-            let subject_text: String = model.get(&iter, 6);
-
-            // Build context menu
-            let popover = gtk4::Popover::new();
-            popover.set_parent(&widget);
+        let widget_for_ctx = mail_list.widget.clone();
+        *mail_list.on_right_click.borrow_mut() = Some(Box::new(move |x, y| {
+            let menu = gio::Menu::new();
+            menu.append(Some("Reply"), Some("app.reply"));
+            menu.append(Some("Reply All"), Some("app.reply-all"));
+            menu.append(Some("Forward"), Some("app.forward"));
+            menu.append(Some("Redirect"), Some("app.redirect"));
+            menu.append_section(None, &{
+                let s = gio::Menu::new();
+                s.append(Some("Delete"), Some("app.delete"));
+                s
+            });
+            let transfer = gio::Menu::new();
+            transfer.append(Some("→ In"), Some("app.transfer-in"));
+            transfer.append(Some("→ Out"), Some("app.transfer-out"));
+            transfer.append(Some("→ Trash"), Some("app.transfer-trash"));
+            menu.append_submenu(Some("Transfer"), &transfer);
+            menu.append_section(None, &{
+                let s = gio::Menu::new();
+                s.append(Some("Mark Read"), Some("app.mark-read"));
+                s.append(Some("Mark Unread"), Some("app.mark-unread"));
+                s.append(Some("Mark Junk"), Some("app.mark-junk"));
+                s.append(Some("Mark Not Junk"), Some("app.mark-not-junk"));
+                s
+            });
+            menu.append_section(None, &{
+                let s = gio::Menu::new();
+                s.append(Some("Make Filter..."), Some("app.make-filter"));
+                s.append(Some("Save As..."), Some("app.save-as"));
+                s
+            });
+            let popover = gtk4::PopoverMenu::from_model(Some(&menu));
+            popover.set_parent(&widget_for_ctx);
+            popover.set_has_arrow(false);
+            popover.set_halign(gtk4::Align::Start);
             popover.set_pointing_to(Some(&gdk4::Rectangle::new(x as i32, y as i32, 1, 1)));
-            popover.set_autohide(true);
-
-            let menu_box = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
-
-            let add_item = |label: &str| -> gtk4::Button {
-                let btn = gtk4::Button::with_label(label);
-                btn.set_has_frame(false);
-                btn.set_halign(gtk4::Align::Fill);
-                if let Some(child) = btn.first_child() {
-                    if let Some(lbl) = child.downcast_ref::<gtk4::Label>() {
-                        lbl.set_halign(gtk4::Align::Start);
-                    }
-                }
-                btn
-            };
-
-            // Make Filter
-            let mf_btn = add_item("Make Filter...");
-            {
-                let pop = popover.clone();
-                let from = from_text.clone();
-                let subj = subject_text.clone();
-                let conf_c = conf_ctx.clone();
-                let w = widget.clone();
-                mf_btn.connect_clicked(move |_| {
-                    pop.popdown();
-                    let home = std::env::var("HOME").unwrap_or_default();
-                    let data_dir = PathBuf::from(&home).join(".local/share/geudora");
-                    let filter_path = data_dir.join("Filters");
-                    let mb_dir = data_dir.join("mailboxes");
-                    let mailboxes: Vec<String> = std::fs::read_dir(&mb_dir)
-                        .map(|rd| rd.filter_map(|e| {
-                            let e = e.ok()?;
-                            let name = e.file_name().to_string_lossy().to_string();
-                            if name.ends_with(".toc") || e.file_type().ok()?.is_dir() { return None; }
-                            Some(name)
-                        }).collect())
-                        .unwrap_or_else(|_| vec!["In".into(), "Out".into(), "Trash".into(), "Junk".into()]);
-                    makefilter::show_make_filter_dialog(&w, &from, &subj, &filter_path, mailboxes);
-                });
-            }
-            menu_box.append(&mf_btn);
-            menu_box.append(&gtk4::Separator::new(gtk4::Orientation::Horizontal));
-
-            // Mark Read / Unread
-            let mr_btn = add_item("Mark Read");
-            {
-                let pop = popover.clone();
-                let mbox = mbox_ctx.clone();
-                let model_ref = model.clone();
-                let iter_ref = iter.clone();
-                mr_btn.connect_clicked(move |_| {
-                    pop.popdown();
-                    if let Ok(mut t) = macmbx::toc::Toc::open(&mbox) {
-                        let i = idx as usize;
-                        if i < t.msgs.len() {
-                            t.msgs[i].state = macmbx::toc::State::Read;
-                            let _ = t.save();
-                            if let Some(store) = model_ref.downcast_ref::<gtk4::ListStore>() {
-                                store.set(&iter_ref, &[(7, &400i32), (1, &"".to_value())]);
-                            }
-                        }
-                    }
-                });
-            }
-            menu_box.append(&mr_btn);
-
-            let mu_btn = add_item("Mark Unread");
-            {
-                let pop = popover.clone();
-                let mbox = mbox_ctx.clone();
-                let model_ref = model.clone();
-                let iter_ref = iter.clone();
-                mu_btn.connect_clicked(move |_| {
-                    pop.popdown();
-                    if let Ok(mut t) = macmbx::toc::Toc::open(&mbox) {
-                        let i = idx as usize;
-                        if i < t.msgs.len() {
-                            t.msgs[i].state = macmbx::toc::State::Unread;
-                            let _ = t.save();
-                            if let Some(store) = model_ref.downcast_ref::<gtk4::ListStore>() {
-                                store.set(&iter_ref, &[(7, &700i32), (1, &"mail-unread-symbolic".to_value())]);
-                            }
-                        }
-                    }
-                });
-            }
-            menu_box.append(&mu_btn);
-
-            menu_box.append(&gtk4::Separator::new(gtk4::Orientation::Horizontal));
-
-            // Delete
-            let del_btn = add_item("Delete");
-            {
-                let pop = popover.clone();
-                let mbox = mbox_ctx.clone();
-                del_btn.connect_clicked(move |_| {
-                    pop.popdown();
-                    if let Ok(mut t) = macmbx::toc::Toc::open(&mbox) {
-                        let i = idx as usize;
-                        if i < t.msgs.len() {
-                            t.msgs[i].flags.insert(macmbx::toc::MsgFlags::DELETED);
-                            let _ = t.save();
-                        }
-                    }
-                });
-            }
-            menu_box.append(&del_btn);
-
-            popover.set_child(Some(&menu_box));
-            popover.connect_closed(|p| p.unparent());
             popover.popup();
-        });
-        tree.add_controller(gesture);
+        }));
     }
 
     // ── Double-click message → open in new tab ──
-    // Outgoing/draft messages open in compose mode (port of main_eudora.c:576-583)
     {
         let toc2 = Rc::new(macmbx::toc::Toc::open(mbox_path)
             .unwrap_or_else(|_| macmbx::toc::Toc::new(mbox_path)));
@@ -3093,11 +2845,10 @@ fn build_mailbox_tab(
             || toc.which == macmbx::toc::MailboxType::OutTemp
             || mbox_path.ends_with("/Out")
             || mbox_path.ends_with("/Out.toc");
-        tree.connect_row_activated(move |tv, path, _col| {
-            let model = tv.model().unwrap();
-            let iter = model.iter(path).unwrap();
-            let idx: i32 = model.get(&iter, 0);
-            let subject: String = model.get(&iter, 6);
+        *mail_list.on_activate.borrow_mut() = Some(Box::new(move |_mbox: &str, idx: i32| {
+            let subject = if (idx as usize) < toc2.msgs.len() {
+                toc2.msgs[idx as usize].subject.clone()
+            } else { String::new() };
 
             // Check if this is an outgoing message
             let msg_state = if (idx as usize) < toc2.msgs.len() {
@@ -3149,7 +2900,7 @@ fn build_mailbox_tab(
             close_btn.connect_clicked(move |_| {
                 if let Some(pn) = nb2.page_num(&pg) { nb2.remove_page(Some(pn)); }
             });
-        });
+        }));
     }
 
     vpaned.upcast()
@@ -3561,6 +3312,62 @@ fn apply_sidebar_theme(idx: usize, sb: &sidebar::SidebarWidget) {
     });
 }
 
+/// Walk all open notebook pages and trigger mail list theme refresh.
+fn apply_mail_list_theme_all(idx: usize, nb: &gtk4::Notebook) {
+    // CURRENT_THEME is already updated by apply_theme().
+    // Force redraw of all open mail list tabs — the draw function reads CURRENT_THEME.
+    let n = nb.n_pages();
+    for i in 0..n {
+        if let Some(page) = nb.nth_page(Some(i)) {
+            if let Some(paned) = page.downcast_ref::<gtk4::Paned>() {
+                if let Some(start) = paned.start_child() {
+                    // Walk children recursively to queue_draw on all DrawingAreas
+                    queue_draw_recursive(&start);
+                }
+            }
+        }
+    }
+}
+
+fn queue_draw_recursive(widget: &gtk4::Widget) {
+    if let Some(da) = widget.downcast_ref::<gtk4::DrawingArea>() {
+        da.queue_draw();
+    }
+    let mut child = widget.first_child();
+    while let Some(w) = child {
+        queue_draw_recursive(&w);
+        child = w.next_sibling();
+    }
+}
+
+fn mail_list_theme_from_palette(idx: usize) -> rwidgets::mail_list::ThemeColors {
+    fn hex3(s: &str) -> (f64, f64, f64) {
+        let s = s.trim_start_matches('#');
+        let r = u8::from_str_radix(&s[0..2], 16).unwrap_or(128) as f64 / 255.0;
+        let g = u8::from_str_radix(&s[2..4], 16).unwrap_or(128) as f64 / 255.0;
+        let b = u8::from_str_radix(&s[4..6], 16).unwrap_or(128) as f64 / 255.0;
+        (r, g, b)
+    }
+    let p = &PALETTES[idx];
+    let is_dark = idx == 1 || idx == 2 || idx == 4;
+    let bg = hex3(p.surface);
+    let text = hex3(p.text);
+    let text2 = hex3(p.text2);
+    let accent = hex3(p.accent);
+    let header_bg = hex3(p.surface2);
+    rwidgets::mail_list::ThemeColors {
+        bg,
+        header_bg: (header_bg.0, header_bg.1, header_bg.2, 1.0),
+        text,
+        text_secondary: text2,
+        hover: if is_dark { (1.0, 1.0, 1.0, 0.04) } else { (0.0, 0.0, 0.0, 0.03) },
+        sel_bg: (accent.0, accent.1, accent.2, 0.15),
+        accent,
+        separator: if is_dark { (1.0, 1.0, 1.0, 0.06) } else { (0.0, 0.0, 0.0, 0.08) },
+        unread_dot: accent,
+    }
+}
+
 // ══════════════════════════════════════════════════════════════════════
 // Message view — port of main_eudora.c create_message_view + helpers
 // ══════════════════════════════════════════════════════════════════════
@@ -3591,6 +3398,44 @@ fn install_msg_css() {
 }
 
 /// Extract a header value from raw message text (handles continuation lines).
+/// Convert raw message bytes to UTF-8, respecting charset from Content-Type header.
+/// Falls back to CP1252 (Eudora's default encoding) instead of lossy UTF-8.
+/// Port of Eudora's charset handling from transliterate.c / textutil.c.
+fn decode_message(raw: &[u8]) -> String {
+    // Fast path: valid UTF-8
+    if let Ok(s) = std::str::from_utf8(raw) {
+        return s.to_string();
+    }
+    // Try to detect charset from Content-Type header
+    let head_end = raw.windows(4).position(|w| w == b"\r\n\r\n")
+        .or_else(|| raw.windows(2).position(|w| w == b"\n\n"))
+        .unwrap_or(raw.len().min(4096));
+    let headers = String::from_utf8_lossy(&raw[..head_end]);
+    let charset = headers.lines()
+        .find(|l| l.to_ascii_lowercase().starts_with("content-type:"))
+        .and_then(|l| {
+            let lower = l.to_ascii_lowercase();
+            lower.find("charset=").map(|pos| {
+                let rest = &l[pos + 8..];
+                rest.trim_start_matches('"').trim_start_matches('\'')
+                    .split(|c: char| c == '"' || c == '\'' || c == ';' || c.is_whitespace())
+                    .next()
+                    .unwrap_or("")
+                    .to_string()
+            })
+        })
+        .unwrap_or_default();
+
+    if !charset.is_empty() {
+        if let Some(s) = crispy::encode::charset_to_utf8(raw, &charset) {
+            return s;
+        }
+    }
+    // Default fallback: CP1252 (most Eudora mail uses this)
+    crispy::encode::charset_to_utf8(raw, "WINDOWS-1252")
+        .unwrap_or_else(|| String::from_utf8_lossy(raw).to_string())
+}
+
 fn extract_header(raw: &str, name: &str) -> Option<String> {
     let needle = format!("{}:", name);
     for line_start in raw.split('\n') {

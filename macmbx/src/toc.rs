@@ -482,7 +482,28 @@ fn read_u8(data: &[u8], off: usize) -> u8 { data[off] }
 fn read_cstr(data: &[u8], off: usize, max: usize) -> String {
     let slice = &data[off..off + max];
     let end = slice.iter().position(|&b| b == 0).unwrap_or(max);
-    String::from_utf8_lossy(&slice[..end]).into_owned()
+    let bytes = &slice[..end];
+    // Try UTF-8 first, fall back to CP1252 (Eudora's native encoding)
+    match std::str::from_utf8(bytes) {
+        Ok(s) => s.to_string(),
+        Err(_) => cp1252_to_utf8(bytes),
+    }
+}
+
+fn cp1252_to_utf8(data: &[u8]) -> String {
+    static CP1252: [u32; 32] = [
+        0x20AC, 0x0081, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021,
+        0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0x008D, 0x017D, 0x008F,
+        0x0090, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014,
+        0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0x009D, 0x017E, 0x0178,
+    ];
+    let mut out = String::with_capacity(data.len() * 2);
+    for &b in data {
+        let cp = if (0x80..=0x9F).contains(&b) { CP1252[(b - 0x80) as usize] }
+                 else { b as u32 };
+        if let Some(c) = char::from_u32(cp) { out.push(c); }
+    }
+    out
 }
 
 fn write_i16(buf: &mut Vec<u8>, v: i16) { buf.extend_from_slice(&v.to_le_bytes()); }

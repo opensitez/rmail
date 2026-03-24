@@ -1,0 +1,15 @@
+[package]
+name = "rwidgets"
+version = "0.1.0"
+edition = "2021"
+description = "Custom GTK4 widgets for rMail — owner-drawn message list, mailbox tree, drag & drop"
+license = "BSD-3-Clause"
+
+[dependencies]
+macmbx = { path = "../macmbx" }
+gtk4 = { version = "0.9", features = ["v4_10"] }
+gdk4 = "0.9"
+glib = "0.20"
+cairo-rs = "0.20"
+pango = "0.20"
+pangocairo = "0.20"

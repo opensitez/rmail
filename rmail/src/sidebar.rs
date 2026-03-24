@@ -72,6 +72,7 @@ pub fn build_sidebar(store: &mut macmbx::store::Store) -> SidebarWidget {
         }));
     }
 
+
     // Wire mailbox-to-folder drop: move the mbox file into the folder
     {
         let omd = on_mailbox_drop.clone();
