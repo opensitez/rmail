@@ -96,7 +96,7 @@ pub type DebugFn = Box<dyn FnMut(&str)>;
 ///
 /// Wraps a [`Transport`] and provides the full POP3 command set.
 pub struct Pop3Session<T: Transport> {
-    tp: T,
+    pub tp: T,
     connected: bool,
     authenticated: bool,
     /// Last single-line reply from the server (CRLF stripped).

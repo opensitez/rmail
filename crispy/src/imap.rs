@@ -496,7 +496,7 @@ fn detect_level(line: &str) -> ImapLevel {
 
 /// IMAP client session.
 pub struct ImapSession<T: Transport> {
-    tp: T,
+    pub tp: T,
     tag_num: u32,
     tag: String,
     /// Last untagged/tagged response text.

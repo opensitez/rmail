@@ -124,6 +124,66 @@ impl From<TransportError> for io::Error {
 pub type Result<T> = std::result::Result<T, TransportError>;
 
 // ---------------------------------------------------------------------------
+// Proxy configuration
+// ---------------------------------------------------------------------------
+
+/// Proxy type for tunneling connections.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProxyType {
+    /// HTTP CONNECT proxy (RFC 7231 §4.3.6).
+    HttpConnect,
+    /// SOCKS5 proxy (RFC 1928).
+    Socks5,
+}
+
+/// Optional proxy configuration for tunneling mail connections.
+///
+/// When set on a `TcpTransport`, the transport connects to the proxy first,
+/// establishes a tunnel to the target host:port, then proceeds with the
+/// mail protocol handshake (including TLS if configured).
+#[derive(Debug, Clone)]
+pub struct ProxyConfig {
+    pub proxy_type: ProxyType,
+    pub host: String,
+    pub port: u16,
+    /// Optional username for proxy authentication.
+    pub username: Option<String>,
+    /// Optional password for proxy authentication.
+    pub password: Option<String>,
+}
+
+impl ProxyConfig {
+    /// Create an HTTP CONNECT proxy config.
+    pub fn http(host: &str, port: u16) -> Self {
+        Self {
+            proxy_type: ProxyType::HttpConnect,
+            host: host.to_string(),
+            port,
+            username: None,
+            password: None,
+        }
+    }
+
+    /// Create a SOCKS5 proxy config.
+    pub fn socks5(host: &str, port: u16) -> Self {
+        Self {
+            proxy_type: ProxyType::Socks5,
+            host: host.to_string(),
+            port,
+            username: None,
+            password: None,
+        }
+    }
+
+    /// Set proxy authentication credentials.
+    pub fn with_auth(mut self, username: &str, password: &str) -> Self {
+        self.username = Some(username.to_string());
+        self.password = Some(password.to_string());
+        self
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Security mode
 // ---------------------------------------------------------------------------
 
@@ -365,6 +425,7 @@ pub struct TcpTransport {
     trusted_pem: Option<String>,
     read_timeout: Option<Duration>,
     write_timeout: Option<Duration>,
+    proxy: Option<ProxyConfig>,
 }
 
 impl TcpTransport {
@@ -381,6 +442,7 @@ impl TcpTransport {
             trusted_pem: Option::None,
             read_timeout: Option::None,
             write_timeout: Option::None,
+            proxy: None,
         }
     }
 
@@ -414,6 +476,11 @@ impl TcpTransport {
         if let Some(ref reader) = self.reader {
             let _ = reader.get_ref().set_read_timeout(timeout);
         }
+    }
+
+    /// Set an optional proxy. When set, `connect()` tunnels through the proxy.
+    pub fn set_proxy(&mut self, proxy: ProxyConfig) {
+        self.proxy = Some(proxy);
     }
 
     /// Set the write timeout. `None` means block indefinitely.
@@ -551,11 +618,28 @@ impl Drop for TcpTransport {
 
 impl Transport for TcpTransport {
     fn connect(&mut self, host: &str, port: u16) -> io::Result<()> {
-        let addr = format!("{}:{}", host, port);
-        let tcp = TcpStream::connect(&addr)?;
-
         self.hostname = host.to_string();
         self.port = port;
+
+        // Connect: direct or through proxy
+        let tcp = if let Some(ref proxy) = self.proxy {
+            let proxy_addr = format!("{}:{}", proxy.host, proxy.port);
+            let mut tcp = TcpStream::connect(&proxy_addr)?;
+            match proxy.proxy_type {
+                ProxyType::HttpConnect => {
+                    proxy_http_connect(&mut tcp, host, port,
+                        proxy.username.as_deref(), proxy.password.as_deref())?;
+                }
+                ProxyType::Socks5 => {
+                    proxy_socks5(&mut tcp, host, port,
+                        proxy.username.as_deref(), proxy.password.as_deref())?;
+                }
+            }
+            tcp
+        } else {
+            let addr = format!("{}:{}", host, port);
+            TcpStream::connect(&addr)?
+        };
 
         // Apply timeouts
         if let Some(t) = self.read_timeout {
@@ -579,7 +663,19 @@ impl Transport for TcpTransport {
                 Ok(()) => {}
                 Err(TransportError::Tls(msg)) if msg.contains("retry connection") => {
                     // User accepted cert — trusted_pem is now set. Reconnect and retry.
-                    let tcp2 = TcpStream::connect(&addr)?;
+                    let tcp2 = if let Some(ref proxy) = self.proxy {
+                        let pa = format!("{}:{}", proxy.host, proxy.port);
+                        let mut t = TcpStream::connect(&pa)?;
+                        match proxy.proxy_type {
+                            ProxyType::HttpConnect => proxy_http_connect(&mut t, host, port,
+                                proxy.username.as_deref(), proxy.password.as_deref())?,
+                            ProxyType::Socks5 => proxy_socks5(&mut t, host, port,
+                                proxy.username.as_deref(), proxy.password.as_deref())?,
+                        }
+                        t
+                    } else {
+                        TcpStream::connect(format!("{}:{}", host, port))?
+                    };
                     if let Some(t) = self.read_timeout { tcp2.set_read_timeout(Some(t))?; }
                     if let Some(t) = self.write_timeout { tcp2.set_write_timeout(Some(t))?; }
                     self.setup_tls_from_tcp(tcp2).map_err(io::Error::from)?;
@@ -768,6 +864,175 @@ pub fn strip_crlf(line: &str) -> &str {
     line.strip_suffix("\r\n")
         .or_else(|| line.strip_suffix('\n'))
         .unwrap_or(line)
+}
+
+// ---------------------------------------------------------------------------
+// Proxy tunneling — HTTP CONNECT (RFC 7231 §4.3.6)
+// ---------------------------------------------------------------------------
+
+/// Establish an HTTP CONNECT tunnel through the proxy to target host:port.
+fn proxy_http_connect(
+    tcp: &mut TcpStream,
+    target_host: &str,
+    target_port: u16,
+    username: Option<&str>,
+    password: Option<&str>,
+) -> io::Result<()> {
+    let mut req = format!(
+        "CONNECT {}:{} HTTP/1.1\r\nHost: {}:{}\r\n",
+        target_host, target_port, target_host, target_port
+    );
+
+    // Proxy-Authorization: Basic base64(user:pass)
+    if let (Some(user), Some(pass)) = (username, password) {
+        let creds = crate::base64::encode(format!("{}:{}", user, pass).as_bytes());
+        req.push_str(&format!("Proxy-Authorization: Basic {}\r\n", creds));
+    }
+
+    req.push_str("\r\n");
+    tcp.write_all(req.as_bytes())?;
+    tcp.flush()?;
+
+    // Read the HTTP response status line
+    let mut response = Vec::with_capacity(256);
+    let mut buf = [0u8; 1];
+    loop {
+        let n = tcp.read(&mut buf)?;
+        if n == 0 {
+            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "proxy closed connection"));
+        }
+        response.push(buf[0]);
+        // End of headers: \r\n\r\n
+        if response.len() >= 4 && &response[response.len() - 4..] == b"\r\n\r\n" {
+            break;
+        }
+        if response.len() > 4096 {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "proxy response too large"));
+        }
+    }
+
+    let status = String::from_utf8_lossy(&response);
+    // Expect "HTTP/1.x 200 ..." or "HTTP/1.x 2xx ..."
+    if let Some(first_line) = status.lines().next() {
+        let parts: Vec<&str> = first_line.splitn(3, ' ').collect();
+        if parts.len() >= 2 {
+            if let Ok(code) = parts[1].parse::<u16>() {
+                if (200..300).contains(&code) {
+                    return Ok(()); // Tunnel established
+                }
+                return Err(io::Error::new(
+                    io::ErrorKind::ConnectionRefused,
+                    format!("proxy CONNECT failed: {}", first_line),
+                ));
+            }
+        }
+    }
+    Err(io::Error::new(io::ErrorKind::InvalidData, "invalid proxy response"))
+}
+
+// ---------------------------------------------------------------------------
+// Proxy tunneling — SOCKS5 (RFC 1928)
+// ---------------------------------------------------------------------------
+
+/// Establish a SOCKS5 tunnel through the proxy to target host:port.
+fn proxy_socks5(
+    tcp: &mut TcpStream,
+    target_host: &str,
+    target_port: u16,
+    username: Option<&str>,
+    password: Option<&str>,
+) -> io::Result<()> {
+    let has_auth = username.is_some() && password.is_some();
+
+    // Step 1: Greeting — supported auth methods
+    if has_auth {
+        tcp.write_all(&[0x05, 0x02, 0x00, 0x02])?; // NO AUTH + USER/PASS
+    } else {
+        tcp.write_all(&[0x05, 0x01, 0x00])?; // NO AUTH only
+    }
+    tcp.flush()?;
+
+    let mut resp = [0u8; 2];
+    tcp.read_exact(&mut resp)?;
+    if resp[0] != 0x05 {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "not a SOCKS5 proxy"));
+    }
+
+    // Step 2: Authenticate if required
+    if resp[1] == 0x02 {
+        // Username/password auth (RFC 1929)
+        let user = username.unwrap_or("");
+        let pass = password.unwrap_or("");
+        let mut auth = vec![0x01, user.len() as u8];
+        auth.extend_from_slice(user.as_bytes());
+        auth.push(pass.len() as u8);
+        auth.extend_from_slice(pass.as_bytes());
+        tcp.write_all(&auth)?;
+        tcp.flush()?;
+
+        let mut auth_resp = [0u8; 2];
+        tcp.read_exact(&mut auth_resp)?;
+        if auth_resp[1] != 0x00 {
+            return Err(io::Error::new(io::ErrorKind::PermissionDenied, "SOCKS5 auth failed"));
+        }
+    } else if resp[1] != 0x00 {
+        return Err(io::Error::new(io::ErrorKind::ConnectionRefused, "SOCKS5: no acceptable auth"));
+    }
+
+    // Step 3: Connect request — DOMAINNAME address type
+    let host_bytes = target_host.as_bytes();
+    if host_bytes.len() > 255 {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "hostname too long for SOCKS5"));
+    }
+    let mut connect = vec![
+        0x05, // version
+        0x01, // CONNECT
+        0x00, // reserved
+        0x03, // DOMAINNAME
+        host_bytes.len() as u8,
+    ];
+    connect.extend_from_slice(host_bytes);
+    connect.push((target_port >> 8) as u8);
+    connect.push((target_port & 0xff) as u8);
+    tcp.write_all(&connect)?;
+    tcp.flush()?;
+
+    // Step 4: Read response
+    let mut hdr = [0u8; 4];
+    tcp.read_exact(&mut hdr)?;
+    if hdr[0] != 0x05 {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "bad SOCKS5 response"));
+    }
+    if hdr[1] != 0x00 {
+        let msg = match hdr[1] {
+            0x01 => "general failure",
+            0x02 => "connection not allowed by ruleset",
+            0x03 => "network unreachable",
+            0x04 => "host unreachable",
+            0x05 => "connection refused by destination",
+            0x06 => "TTL expired",
+            0x07 => "command not supported",
+            0x08 => "address type not supported",
+            _ => "unknown SOCKS5 error",
+        };
+        return Err(io::Error::new(io::ErrorKind::ConnectionRefused,
+            format!("SOCKS5 connect failed: {}", msg)));
+    }
+
+    // Skip bound address in response
+    match hdr[3] {
+        0x01 => { let mut skip = [0u8; 6]; tcp.read_exact(&mut skip)?; } // IPv4 + port
+        0x03 => {
+            let mut len = [0u8; 1];
+            tcp.read_exact(&mut len)?;
+            let mut skip = vec![0u8; len[0] as usize + 2]; // domain + port
+            tcp.read_exact(&mut skip)?;
+        }
+        0x04 => { let mut skip = [0u8; 18]; tcp.read_exact(&mut skip)?; } // IPv6 + port
+        _ => {}
+    }
+
+    Ok(()) // Tunnel established
 }
 
 // ---------------------------------------------------------------------------

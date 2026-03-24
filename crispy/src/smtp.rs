@@ -396,7 +396,7 @@ pub type DebugFn = Box<dyn Fn(&str) + Send>;
 /// Wraps a [`Transport`] and provides the full SMTP command set:
 /// connect, EHLO, STARTTLS, AUTH, MAIL FROM, RCPT TO, DATA, QUIT.
 pub struct SmtpSession<T: Transport> {
-    tp: T,
+    pub tp: T,
     /// Parsed EHLO capabilities.
     pub caps: Capabilities,
     /// Reply code from last server response.
