@@ -445,6 +445,19 @@ impl EditorCtrl {
         s.sel_end = s.caret;
     }
 
+    /// Insert a custom-drawn graphic at the caret (charts, graphs, etc.).
+    pub fn insert_custom_graphic<F>(&self, width: i32, height: i32, draw_func: F)
+    where
+        F: Fn(&pangocairo::cairo::Context, i32, i32) + 'static,
+    {
+        let caret = self.state.borrow().caret;
+        self.doc.insert_custom_graphic(caret, width, height, draw_func);
+        let mut s = self.state.borrow_mut();
+        s.caret += 1;
+        s.sel_start = s.caret;
+        s.sel_end = s.caret;
+    }
+
     /// Insert a horizontal rule at the caret.
     pub fn insert_hr(&self) {
         let caret = self.state.borrow().caret;
@@ -1160,13 +1173,20 @@ impl EditorCtrl {
                     // Delete the U+FFFC placeholder.
                     self.doc.delete_range(sp_off, 1);
 
-                    // Try to load texture from file path.
+                    // Try to load texture from file path or URI.
                     let mut texture: Option<gdk4::Texture> = None;
                     if !isrc.is_empty() {
-                        let file = gtk4::gio::File::for_path(isrc);
+                        // Strip file:// prefix if present to get raw path
+                        let raw_path = if isrc.starts_with("file://") {
+                            &isrc[7..]
+                        } else {
+                            isrc
+                        };
+                        let file = gtk4::gio::File::for_path(raw_path);
                         if file.query_exists(gtk4::gio::Cancellable::NONE) {
                             texture = gdk4::Texture::from_file(&file).ok();
                         } else {
+                            // Try as URI (http://, data:, etc.)
                             let uri_file = gtk4::gio::File::for_uri(isrc);
                             if uri_file.query_exists(gtk4::gio::Cancellable::NONE) {
                                 texture = gdk4::Texture::from_file(&uri_file).ok();

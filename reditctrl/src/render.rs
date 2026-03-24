@@ -328,7 +328,13 @@ fn draw_inline_image(cr: &CairoContext, graphic: &Graphic, gx: f64, gy: f64) {
     let gw = graphic.width as f64;
     let gh = graphic.height as f64;
 
-    if let Some(ref texture) = graphic.texture {
+    if let Some(ref draw_func) = graphic.draw_func {
+        // Custom-draw graphic (charts, graphs, etc.)
+        cr.save().expect("cairo save");
+        cr.translate(gx, gy);
+        draw_func(cr, graphic.width, graphic.height);
+        cr.restore().expect("cairo restore");
+    } else if let Some(ref texture) = graphic.texture {
         let tw = texture.width() as f64;
         let th = texture.height() as f64;
 

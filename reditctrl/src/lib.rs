@@ -25,3 +25,4 @@ pub mod print;
 pub mod widget;
 pub mod glue;
 pub mod gtk_widget;
+pub mod graph;

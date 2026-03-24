@@ -90,14 +90,45 @@ pub struct TabStop {
 // Graphic
 // ---------------------------------------------------------------------------
 
+/// Custom draw callback for host-drawn graphics (charts, graphs, etc.).
+/// Called during rendering with cairo translated to the graphic's position.
+pub type GraphicDrawFn = Box<dyn Fn(&pangocairo::cairo::Context, i32, i32) + 'static>;
+
 /// Inline graphic embedded in the document.
-#[derive(Debug, Clone)]
 pub struct Graphic {
     pub offset: i32,
     pub width: i32,
     pub height: i32,
     pub texture: Option<gdk::Texture>,
     pub src: Option<String>,
+    /// Custom draw callback (charts, graphs, etc.). When set, used instead of texture.
+    pub draw_func: Option<std::rc::Rc<dyn Fn(&pangocairo::cairo::Context, i32, i32)>>,
+}
+
+impl std::fmt::Debug for Graphic {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Graphic")
+            .field("offset", &self.offset)
+            .field("width", &self.width)
+            .field("height", &self.height)
+            .field("texture", &self.texture)
+            .field("src", &self.src)
+            .field("has_draw_func", &self.draw_func.is_some())
+            .finish()
+    }
+}
+
+impl Clone for Graphic {
+    fn clone(&self) -> Self {
+        Self {
+            offset: self.offset,
+            width: self.width,
+            height: self.height,
+            texture: self.texture.clone(),
+            src: self.src.clone(),
+            draw_func: self.draw_func.clone(),
+        }
+    }
 }
 
 impl Graphic {
@@ -108,6 +139,22 @@ impl Graphic {
             height,
             texture,
             src: None,
+            draw_func: None,
+        }
+    }
+
+    /// Create a graphic with a custom draw callback (no texture needed).
+    pub fn with_draw_func<F>(offset: i32, width: i32, height: i32, draw_func: F) -> Self
+    where
+        F: Fn(&pangocairo::cairo::Context, i32, i32) + 'static,
+    {
+        Self {
+            offset,
+            width,
+            height,
+            texture: None,
+            src: None,
+            draw_func: Some(std::rc::Rc::new(draw_func)),
         }
     }
 }
@@ -1323,6 +1370,7 @@ impl Document {
                 height,
                 texture: texture.clone(),
                 src: None,
+                draw_func: None,
             };
 
             let run = StyleRun {
@@ -1334,6 +1382,49 @@ impl Document {
             };
 
             // Insert in sorted order by offset
+            let pos = inner
+                .style_runs
+                .iter()
+                .position(|r| r.offset > offset)
+                .unwrap_or(inner.style_runs.len());
+            inner.style_runs.insert(pos, run);
+        }
+        self.emit_changed();
+    }
+
+    /// Insert a custom-drawn graphic (charts, graphs, etc.) at `offset`.
+    pub fn insert_custom_graphic<F>(
+        &self,
+        offset: i32,
+        width: i32,
+        height: i32,
+        draw_func: F,
+    ) where
+        F: Fn(&pangocairo::cairo::Context, i32, i32) + 'static,
+    {
+        {
+            let mut inner = self.inner.borrow_mut();
+            inner.push_undo();
+
+            let byte_offset = char_offset_to_byte(&inner.text, offset);
+            inner.text.insert_str(byte_offset, "\u{FFFC}");
+
+            for r in &mut inner.style_runs {
+                if r.offset >= offset {
+                    r.offset += 1;
+                }
+            }
+
+            let gr = Graphic::with_draw_func(offset, width, height, draw_func);
+
+            let run = StyleRun {
+                offset,
+                length: 1,
+                is_graphic: true,
+                graphic: Some(gr),
+                ..Default::default()
+            };
+
             let pos = inner
                 .style_runs
                 .iter()
