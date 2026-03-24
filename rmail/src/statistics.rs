@@ -6,6 +6,8 @@
 
 use gtk4::prelude::*;
 use macmbx::toc::{Toc, State};
+use macmbx::stats::{Stats, NumStat, ShortStat, Period as StatPeriod};
+use reditctrl::graph::{self, GraphData, GraphType, SeriesInfo, Color};
 use std::cell::Cell;
 use std::path::Path;
 use std::rc::Rc;
@@ -113,6 +115,15 @@ impl Period {
             Period::Week => "last week",
             Period::Month => "last month",
             Period::Year => "last year",
+        }
+    }
+
+    fn to_stat_period(self) -> StatPeriod {
+        match self {
+            Period::Day => StatPeriod::Day,
+            Period::Week => StatPeriod::Week,
+            Period::Month => StatPeriod::Month,
+            Period::Year => StatPeriod::Year,
         }
     }
 }
@@ -265,6 +276,30 @@ fn s_card_title(title: &str) -> gtk4::Label {
     l
 }
 
+// ── Graph widget helper ──
+
+/// Create a GtkDrawingArea that renders a GraphData chart.
+fn graph_widget(data: GraphData, width: i32, height: i32) -> gtk4::DrawingArea {
+    let area = gtk4::DrawingArea::new();
+    area.set_content_width(width);
+    area.set_content_height(height);
+    let data = Rc::new(data);
+    area.set_draw_func(move |_area, cr, w, h| {
+        graph::draw_graph(cr, w, h, &data);
+    });
+    area
+}
+
+// Eudora stat graph colors
+const COLOR_CURRENT: Color = Color::new(0.196, 0.510, 0.788);  // #3182ce
+const COLOR_PREVIOUS: Color = Color::new(0.878, 0.620, 0.180); // #d69e2e
+const COLOR_AVERAGE: Color = Color::new(0.220, 0.631, 0.412);  // #38a169
+
+// Pie chart colors
+const COLOR_READ: Color = Color::new(0.196, 0.510, 0.788);     // #3182ce
+const COLOR_COMPOSE: Color = Color::new(0.220, 0.631, 0.412);  // #38a169
+const COLOR_OTHER: Color = Color::new(0.878, 0.620, 0.180);    // #d69e2e
+
 // ── Build stats content (port of build_stats) ──
 
 fn build_stats(container: &gtk4::Box, period: Period, data_dir: &Path) {
@@ -287,17 +322,20 @@ fn build_stats(container: &gtk4::Box, period: Period, data_dir: &Path) {
     }
     container.append(&prow);
 
-    // ── Data (placeholder zeros for StatGet*, real counts from TOC) ──
-    let rc: i64 = 0; // StatGetCurrentPeriod — not available yet
-    let rl: i64 = 0; // StatGetLastPeriod — not available yet
-    let sc: i64 = 0;
-    let sl: i64 = 0;
-    let rt = counts.received;
-    let st = counts.sent;
-    let rdt = counts.read;
-    let ft: i64 = 0; // face time — not available yet
-    let jt = counts.junk;
-    let njt: i64 = 0; // scored not junk — not available yet
+    // ── Data from Stats engine + TOC counts ──
+    let stats = Stats::open(data_dir);
+    let sp = period.to_stat_period();
+
+    let rc = stats.get_num_current(NumStat::ReceivedMail, sp);
+    let rl = stats.get_num_last(NumStat::ReceivedMail, sp);
+    let sc = stats.get_num_current(NumStat::SentMail, sp);
+    let sl = stats.get_num_last(NumStat::SentMail, sp);
+    let rt = if rc > 0 { rc } else { counts.received }; // prefer stats, fallback to TOC
+    let st = if sc > 0 { sc } else { counts.sent };
+    let rdt = stats.get_short_current(ShortStat::ReadMsg, sp).max(counts.read);
+    let ft = stats.get_num_current(NumStat::FaceTime, sp);
+    let jt = stats.get_num_current(NumStat::ScoredJunk, sp).max(counts.junk);
+    let njt = stats.get_num_current(NumStat::ScoredNotJunk, sp);
 
     // ── Top pills ──
     let s1 = format!("{}", rc);
@@ -339,8 +377,7 @@ fn build_stats(container: &gtk4::Box, period: Period, data_dir: &Path) {
 
     match period {
         Period::Day => {
-            // Hourly breakdown — placeholder zeros (no StatGetHourlyData yet)
-            let hrs: [i64; 24] = [0; 24];
+            let hrs = stats.get_hourly(NumStat::ReceivedMail);
             let mx = hrs.iter().copied().max().unwrap_or(0).max(1);
             for i in 0..24 {
                 if hrs[i] > 0 || (i >= 7 && i <= 21) {
@@ -350,26 +387,40 @@ fn build_stats(container: &gtk4::Box, period: Period, data_dir: &Path) {
             }
         }
         Period::Week => {
-            // Weekly breakdown — placeholder zeros
             let day_names = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-            let wk: [i64; 7] = [0; 7];
+            let wk = stats.get_weekly(NumStat::ReceivedMail);
             let mx = wk.iter().copied().max().unwrap_or(0).max(1);
             for i in 0..7 {
                 rc1.append(&s_bar(day_names[i], wk[i], mx, None));
             }
         }
-        _ => {
-            // Month/Year — summary text
-            let b1 = format!("This period: {} received", rc);
-            let b2 = format!("Last period: {} received", rl);
-            let l1 = gtk4::Label::new(Some(&b1));
-            l1.add_css_class("s-bar-lbl");
-            l1.set_xalign(0.0);
-            rc1.append(&l1);
-            let l2 = gtk4::Label::new(Some(&b2));
-            l2.add_css_class("s-bar-lbl");
-            l2.set_xalign(0.0);
-            rc1.append(&l2);
+        Period::Month => {
+            let mo = stats.get_monthly(NumStat::ReceivedMail);
+            let mx = mo.iter().copied().max().unwrap_or(0).max(1);
+            for i in 0..31 {
+                if mo[i] > 0 {
+                    let lb = format!("{}", i + 1);
+                    rc1.append(&s_bar(&lb, mo[i], mx, None));
+                }
+            }
+            if mo.iter().all(|&v| v == 0) {
+                let b1 = format!("This period: {} received", rc);
+                let b2 = format!("Last period: {} received", rl);
+                let l1 = gtk4::Label::new(Some(&b1));
+                l1.add_css_class("s-bar-lbl"); l1.set_xalign(0.0);
+                rc1.append(&l1);
+                let l2 = gtk4::Label::new(Some(&b2));
+                l2.add_css_class("s-bar-lbl"); l2.set_xalign(0.0);
+                rc1.append(&l2);
+            }
+        }
+        Period::Year => {
+            let yr = stats.get_yearly(NumStat::ReceivedMail);
+            let mon_names = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+            let mx = yr.iter().copied().max().unwrap_or(0).max(1);
+            for i in 0..12 {
+                rc1.append(&s_bar(mon_names[i], yr[i], mx, None));
+            }
         }
     }
 
@@ -381,6 +432,91 @@ fn build_stats(container: &gtk4::Box, period: Period, data_dir: &Path) {
         rc1.append(&e);
     }
     c1.append(&rc1);
+
+    // ── Received line graph (port of GetGraphPict for received stats) ──
+    {
+        let (current_pts, last_pts, avg_pts, x_labels) = match period {
+            Period::Day => {
+                let c = stats.get_hourly(NumStat::ReceivedMail);
+                let ns = &stats.num[NumStat::ReceivedMail as usize];
+                let l: Vec<u64> = ns.last.day.iter().map(|&v| v as u64).collect();
+                let a: Vec<u64> = ns.average.day.iter().map(|&v| v as u64).collect();
+                let pts: Vec<u64> = c.iter().map(|&v| v as u64).collect();
+                let labels: Vec<String> = (0..24).map(|h| format!("{:02}", h)).collect();
+                (pts, l, a, labels)
+            }
+            Period::Week => {
+                let c = stats.get_weekly(NumStat::ReceivedMail);
+                let ns = &stats.num[NumStat::ReceivedMail as usize];
+                let l: Vec<u64> = ns.last.week.iter().map(|&v| v as u64).collect();
+                let a: Vec<u64> = ns.average.week.iter().map(|&v| v as u64).collect();
+                let pts: Vec<u64> = c.iter().map(|&v| v as u64).collect();
+                let labels = vec!["S","M","T","W","T","F","S"]
+                    .into_iter().map(String::from).collect();
+                (pts, l, a, labels)
+            }
+            Period::Month => {
+                let c = stats.get_monthly(NumStat::ReceivedMail);
+                let ns = &stats.num[NumStat::ReceivedMail as usize];
+                let l: Vec<u64> = ns.last.month.iter().map(|&v| v as u64).collect();
+                let a: Vec<u64> = ns.average.month.iter().map(|&v| v as u64).collect();
+                let pts: Vec<u64> = c.iter().map(|&v| v as u64).collect();
+                let labels: Vec<String> = (1..=31).map(|d| format!("{}", d)).collect();
+                (pts, l, a, labels)
+            }
+            Period::Year => {
+                let c = stats.get_yearly(NumStat::ReceivedMail);
+                let ns = &stats.num[NumStat::ReceivedMail as usize];
+                let l: Vec<u64> = ns.last.year.iter().map(|&v| v as u64).collect();
+                let a: Vec<u64> = ns.average.year.iter().map(|&v| v as u64).collect();
+                let pts: Vec<u64> = c.iter().map(|&v| v as u64).collect();
+                let labels = vec!["J","F","M","A","M","J","J","A","S","O","N","D"]
+                    .into_iter().map(String::from).collect();
+                (pts, l, a, labels)
+            }
+        };
+        let n = current_pts.len();
+        let graph_data = GraphData {
+            graph_type: GraphType::Line,
+            x_labels,
+            series: vec![
+                SeriesInfo {
+                    graph_type: GraphType::Default,
+                    data: current_pts,
+                    color: COLOR_CURRENT,
+                    label: "This period".into(),
+                    divider: 0,
+                },
+                SeriesInfo {
+                    graph_type: GraphType::Default,
+                    data: last_pts,
+                    color: COLOR_PREVIOUS,
+                    label: last_n.into(),
+                    divider: 0,
+                },
+                SeriesInfo {
+                    graph_type: GraphType::Default,
+                    data: avg_pts,
+                    color: COLOR_AVERAGE,
+                    label: "Average".into(),
+                    divider: 0,
+                },
+            ],
+            data_count: n,
+            divider: 0,
+            dec_place: 0,
+            legend: true,
+            large_tick_interval: match period {
+                Period::Day => 4,
+                Period::Month => 5,
+                _ => 0,
+            },
+            med_tick_interval: 0,
+        };
+        let gw = graph_widget(graph_data, 350, 180);
+        gw.set_margin_top(8);
+        c1.append(&gw);
+    }
     cols.append(&c1);
 
     // ── Col 2: Message Activity ──
@@ -391,11 +527,11 @@ fn build_stats(container: &gtk4::Box, period: Period, data_dir: &Path) {
     let ac = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
     ac.add_css_class("s-card");
 
-    let fwd = counts.forwarded;
-    let rply = counts.replied;
-    let rdir = counts.redirected;
-    let ratt: i64 = 0; // StatGetTotal(kStatReceivedAttach) — not available
-    let satt: i64 = 0; // StatGetTotal(kStatSentAttach) — not available
+    let fwd = stats.get_short_current(ShortStat::ForwardMsg, sp).max(counts.forwarded);
+    let rply = stats.get_short_current(ShortStat::ReplyMsg, sp).max(counts.replied);
+    let rdir = stats.get_short_current(ShortStat::RedirectMsg, sp).max(counts.redirected);
+    let ratt = stats.get_short_current(ShortStat::ReceivedAttach, sp);
+    let satt = stats.get_short_current(ShortStat::SentAttach, sp);
     let mx = rt.max(st).max(1);
 
     ac.append(&s_bar("Received", rt, mx, None));
@@ -406,6 +542,35 @@ fn build_stats(container: &gtk4::Box, period: Period, data_dir: &Path) {
     ac.append(&s_bar("Redirected", rdir, mx, None));
     ac.append(&s_bar("Attach recv", ratt, mx, Some("s-bar-amber")));
     ac.append(&s_bar("Attach sent", satt, mx, Some("s-bar-green")));
+
+    // ── Message activity bar chart ──
+    {
+        let graph_data = GraphData {
+            graph_type: GraphType::Bar,
+            x_labels: vec![
+                "Recv".into(), "Sent".into(), "Read".into(),
+                "Reply".into(), "Fwd".into(),
+            ],
+            series: vec![
+                SeriesInfo {
+                    graph_type: GraphType::Default,
+                    data: vec![rt as u64, st as u64, rdt as u64, rply as u64, fwd as u64],
+                    color: COLOR_CURRENT,
+                    label: "Messages".into(),
+                    divider: 0,
+                },
+            ],
+            data_count: 5,
+            divider: 0,
+            dec_place: 0,
+            legend: false,
+            large_tick_interval: 0,
+            med_tick_interval: 0,
+        };
+        let gw = graph_widget(graph_data, 350, 150);
+        gw.set_margin_top(8);
+        ac.append(&gw);
+    }
     c2.append(&ac);
 
     // Face time
@@ -413,9 +578,9 @@ fn build_stats(container: &gtk4::Box, period: Period, data_dir: &Path) {
     let fc = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
     fc.add_css_class("s-card");
 
-    let fr: i64 = 0; // StatGetTotal(kStatFaceTimeRead)
-    let fw: i64 = 0; // StatGetTotal(kStatFaceTimeCompose)
-    let fo: i64 = 0; // StatGetTotal(kStatFaceTimeOther)
+    let fr = stats.get_short_current(ShortStat::FaceTimeRead, sp);
+    let fw = stats.get_short_current(ShortStat::FaceTimeCompose, sp);
+    let fo = stats.get_short_current(ShortStat::FaceTimeOther, sp);
     let fm = fr.max(fw).max(fo).max(1);
 
     fc.append(&s_bar("Reading", fr, fm, None));
@@ -436,6 +601,49 @@ fn build_stats(container: &gtk4::Box, period: Period, data_dir: &Path) {
         pl.set_margin_top(4);
         fc.append(&pl);
     }
+
+    // ── Face time pie chart (port of ComposeUsageActivities graph) ──
+    {
+        let read_val = fr.max(0) as u64;
+        let compose_val = fw.max(0) as u64;
+        let other_val = fo.max(0) as u64;
+        let graph_data = GraphData {
+            graph_type: GraphType::Pie,
+            x_labels: vec![],
+            series: vec![
+                SeriesInfo {
+                    graph_type: GraphType::Default,
+                    data: vec![read_val, compose_val, other_val],
+                    color: COLOR_READ,
+                    label: "Reading".into(),
+                    divider: 0,
+                },
+                SeriesInfo {
+                    graph_type: GraphType::Default,
+                    data: vec![],
+                    color: COLOR_COMPOSE,
+                    label: "Composing".into(),
+                    divider: 0,
+                },
+                SeriesInfo {
+                    graph_type: GraphType::Default,
+                    data: vec![],
+                    color: COLOR_OTHER,
+                    label: "Other".into(),
+                    divider: 0,
+                },
+            ],
+            data_count: 3,
+            divider: 0,
+            dec_place: 0,
+            legend: true,
+            large_tick_interval: 0,
+            med_tick_interval: 0,
+        };
+        let gw = graph_widget(graph_data, 300, 160);
+        gw.set_margin_top(8);
+        fc.append(&gw);
+    }
     c2.append(&fc);
     cols.append(&c2);
 
@@ -447,10 +655,10 @@ fn build_stats(container: &gtk4::Box, period: Period, data_dir: &Path) {
     let jc = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
     jc.add_css_class("s-card");
 
-    let wl: i64 = 0;  // StatGetTotal(kStatWhiteList)
-    let fp: i64 = 0;  // StatGetTotal(kStatFalsePositives)
-    let fnn: i64 = 0; // StatGetTotal(kStatFalseNegatives)
-    let fwl: i64 = 0; // StatGetTotal(kStatFalseWhiteList)
+    let wl = stats.get_num_current(NumStat::WhiteList, sp);
+    let fp = stats.get_num_current(NumStat::FalsePositives, sp);
+    let fnn = stats.get_num_current(NumStat::FalseNegatives, sp);
+    let fwl = stats.get_num_current(NumStat::FalseWhiteList, sp);
 
     let jmx = jt.max(njt).max(1);
     jc.append(&s_bar("Scored Junk", jt, jmx, Some("s-bar-red")));
@@ -498,10 +706,21 @@ fn build_stats(container: &gtk4::Box, period: Period, data_dir: &Path) {
     let cp = gtk4::Box::new(gtk4::Orientation::Vertical, 2);
     cp.add_css_class("s-card");
 
-    // No StatGetStartTime yet — show placeholder
-    let ns = gtk4::Label::new(Some("No data collected yet"));
-    ns.add_css_class("s-pill-sub");
-    cp.append(&ns);
+    let start = stats.start_time;
+    if start > 0 {
+        // Format start time
+        let dur_secs = stats.current_time - start;
+        let days = dur_secs / 86400;
+        let start_str = format!("Collecting since {} days ago", days);
+        let sl = gtk4::Label::new(Some(&start_str));
+        sl.add_css_class("s-bar-lbl");
+        sl.set_xalign(0.0);
+        cp.append(&sl);
+    } else {
+        let ns = gtk4::Label::new(Some("No data collected yet"));
+        ns.add_css_class("s-pill-sub");
+        cp.append(&ns);
+    }
 
     c3.append(&cp);
     cols.append(&c3);

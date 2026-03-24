@@ -876,9 +876,10 @@ fn build_compose_tab_inner(conf: &Conf, prefill: Option<&ComposeData>, mailer: A
         });
     }
 
-    // Find/Replace bar — hidden by default, toggled by ⌘H / find-replace action
+    // Find/Replace bar — hidden by default, toggled by ⌘F / ⌘H
     let find_bar = crate::findreplace::build_find_bar(&editor_rc);
     find_bar.set_visible(false);
+    find_bar.set_widget_name("find-bar");
     vbox.append(&find_bar);
 
     // ⌘F in compose toggles the find bar

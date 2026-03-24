@@ -438,6 +438,15 @@ fn hosts() -> SettingsPanel {
             SettingsField::Text { section: "hosts", key: "finger_server", label: "Finger Server", placeholder: "" },
             SettingsField::GroupEnd,
 
+            SettingsField::GroupStart { label: "Proxy" },
+            SettingsField::Choice { section: "proxy", key: "type", label: "Proxy Type",
+                options: &["None", "HTTP CONNECT", "SOCKS5"], default: 0 },
+            SettingsField::Text { section: "proxy", key: "host", label: "Proxy Server", placeholder: "proxy.example.com" },
+            SettingsField::Int { section: "proxy", key: "port", prefix: "Port", suffix: "", default: 8080, min: 1, max: 65535 },
+            SettingsField::Text { section: "proxy", key: "username", label: "Username", placeholder: "(optional)" },
+            SettingsField::Text { section: "proxy", key: "password", label: "Password", placeholder: "(optional)" },
+            SettingsField::GroupEnd,
+
             SettingsField::GroupStart { label: "Network" },
             SettingsField::Bool { section: "hosts", key: "dns_load_balance", label: "DNS load balancing", default: false },
             SettingsField::Bool { section: "hosts", key: "offline_mode", label: "Start in offline mode", default: false },

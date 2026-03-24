@@ -23,6 +23,8 @@ mod signatures;
 mod stationery;
 mod statistics;
 mod tasks;
+mod urlhandler;
+mod makefilter;
 
 /// Application state — owns all data, shared via Rc<RefCell<>>.
 struct AppState {
@@ -35,6 +37,8 @@ struct AppState {
     mailer: std::sync::Arc<macmbx::mailer::Mailer>,
     /// Address books for autocomplete.
     books: Option<Rc<macmbx::nicknames::AddressBooks>>,
+    /// Transfer undo stack (port of oops.c XfUndoH).
+    xf_undo: macmbx::ops::TransferUndo,
 }
 
 impl AppState {
@@ -88,6 +92,7 @@ impl AppState {
             conf_shared,
             mailer,
             books,
+            xf_undo: macmbx::ops::TransferUndo::new(),
         })
     }
 }
@@ -300,6 +305,27 @@ fn show_toolbar_customize_dialog(
     dlg.present();
 }
 
+/// Toggle the find bar in the current notebook page.
+/// Searches for a widget named "find-bar" in the page's widget tree.
+fn toggle_find_bar_in_current_page(notebook: &gtk4::Notebook) {
+    let Some(page) = notebook.nth_page(notebook.current_page()) else { return };
+    fn find_named(widget: &gtk4::Widget, name: &str) -> Option<gtk4::Widget> {
+        if widget.widget_name() == name { return Some(widget.clone()); }
+        let mut child = widget.first_child();
+        while let Some(c) = child {
+            if let Some(found) = find_named(&c, name) { return Some(found); }
+            child = c.next_sibling();
+        }
+        None
+    }
+    if let Some(bar) = find_named(&page, "find-bar") {
+        bar.set_visible(!bar.is_visible());
+        if bar.is_visible() {
+            bar.grab_focus();
+        }
+    }
+}
+
 fn build_ui(app: &gtk4::Application) {
     let state = match AppState::open(&data_dir()) {
         Ok(s) => Rc::new(RefCell::new(s)),
@@ -339,6 +365,7 @@ fn build_ui(app: &gtk4::Application) {
     edit_menu.append_section(None, &gio::Menu::new());
     edit_menu.append(Some("_Find..."), Some("app.find"));
     edit_menu.append(Some("Find/Re_place..."), Some("app.find-replace"));
+    edit_menu.append(Some("_Search Mailboxes..."), Some("app.search"));
     edit_menu.append_section(None, &gio::Menu::new());
     edit_menu.append(Some("Zoom _In"), Some("app.zoom-in"));
     edit_menu.append(Some("Zoom _Out"), Some("app.zoom-out"));
@@ -360,6 +387,8 @@ fn build_ui(app: &gtk4::Application) {
     message_menu.append(Some("Mark as _Unread"), Some("app.mark-unread"));
     message_menu.append(Some("Mark as _Junk"), Some("app.mark-junk"));
     message_menu.append(Some("Mark as _Not Junk"), Some("app.mark-not-junk"));
+    message_menu.append_section(None, &gio::Menu::new());
+    message_menu.append(Some("Ma_ke Filter..."), Some("app.make-filter"));
     menu_bar.append_submenu(Some("_Message"), &message_menu);
 
     // Transfer
@@ -428,7 +457,7 @@ fn build_ui(app: &gtk4::Application) {
     app.set_accels_for_action("app.delete", &["<Meta>d", "Delete"]);
     app.set_accels_for_action("app.check-mail", &["<Meta>m"]);
     app.set_accels_for_action("app.send-queued", &["<Meta>t"]);
-    app.set_accels_for_action("app.find", &["<Meta>f"]);
+    app.set_accels_for_action("app.search", &["<Meta><Shift>f"]);
     app.set_accels_for_action("app.preferences", &["<Meta>comma"]);
     app.set_accels_for_action("app.quit", &["<Meta>q"]);
     app.set_accels_for_action("app.print", &["<Meta>p"]);
@@ -450,12 +479,30 @@ fn build_ui(app: &gtk4::Application) {
     // Remaining stub actions (menus that don't need notebook)
     for name in &[
         "open", "close", "save",
-        "undo", "cut", "copy", "paste", "select-all", "spelling",
-        "queue", "find-replace",
+        "cut", "copy", "paste", "select-all", "spelling",
+        "queue",
         "send-queued", "minimize", "tabs",
     ] {
         let action = gio::SimpleAction::new(name, None);
         app.add_action(&action);
+    }
+
+    // ── Undo — text undo in editor, or transfer undo (port of oops.c DoUndo) ──
+    {
+        let undo_action = gio::SimpleAction::new("undo", None);
+        let st = state.clone();
+        undo_action.connect_activate(move |_, _| {
+            // Check for transfer undo first (like oops.c: IsTransferUndo())
+            if st.borrow().xf_undo.can_undo() {
+                let undone = st.borrow_mut().xf_undo.undo();
+                if undone > 0 {
+                    eprintln!("rMail: undid {} transfer(s)", undone);
+                }
+                return;
+            }
+            // Text undo is handled by the editor's Cmd+Z key binding
+        });
+        app.add_action(&undo_action);
     }
 
     // ── Save As — save selected message as .eml file ──
@@ -609,15 +656,12 @@ fn build_ui(app: &gtk4::Application) {
     let mb_vbox = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
     mb_vbox.add_css_class("sidebar-bg");
 
-    let sidebar_tree = sidebar::build_sidebar(&state.borrow().store);
-    let sidebar_scroll = gtk4::ScrolledWindow::builder()
-        .child(&sidebar_tree)
-        .hscrollbar_policy(gtk4::PolicyType::Never)
-        .vscrollbar_policy(gtk4::PolicyType::Automatic)
-        .vexpand(true)
-        .hexpand(true)
-        .build();
-    mb_vbox.append(&sidebar_scroll);
+    let sidebar = Rc::new(sidebar::build_sidebar(&mut state.borrow_mut().store));
+    sidebar.widget.set_hexpand(true);
+    mb_vbox.append(&sidebar.widget);
+
+    // Shared state: currently selected mailbox (path, name, is_dir), updated by on_activate
+    let selected_mailbox: Rc<RefCell<Option<(String, String, bool)>>> = Rc::new(RefCell::new(None));
 
     // Mailbox button bar with real handlers
     let mb_btn_bar = gtk4::Box::new(gtk4::Orientation::Horizontal, 4);
@@ -632,7 +676,7 @@ fn build_ui(app: &gtk4::Application) {
     mb_new_btn.set_has_frame(false);
     {
         let st = state.clone();
-        let tree = sidebar_tree.clone();
+        let sb = sidebar.clone();
         mb_new_btn.connect_clicked(move |_| {
             let s = st.borrow();
             let mb_dir = s.data_dir.join("mailboxes");
@@ -648,9 +692,8 @@ fn build_ui(app: &gtk4::Application) {
                 // Create empty TOC
                 let _ = macmbx::toc::Toc::open_or_create(&path);
                 // Refresh sidebar
-                if let Ok(new_store) = macmbx::store::Store::open(&mb_dir) {
-                    let tree_store = sidebar::build_sidebar(&new_store);
-                    tree.set_model(Some(&tree_store.model().unwrap()));
+                if let Ok(mut new_store) = macmbx::store::Store::open(&mb_dir) {
+                    sb.refresh(&mut new_store);
                 }
             }
         });
@@ -662,7 +705,7 @@ fn build_ui(app: &gtk4::Application) {
     mb_folder_btn.set_has_frame(false);
     {
         let st = state.clone();
-        let tree = sidebar_tree.clone();
+        let sb = sidebar.clone();
         mb_folder_btn.connect_clicked(move |_| {
             let s = st.borrow();
             let mb_dir = s.data_dir.join("mailboxes");
@@ -673,9 +716,8 @@ fn build_ui(app: &gtk4::Application) {
                 name = format!("New Folder {}", i);
             }
             let _ = std::fs::create_dir_all(mb_dir.join(&name));
-            if let Ok(new_store) = macmbx::store::Store::open(&mb_dir) {
-                let tree_store = sidebar::build_sidebar(&new_store);
-                tree.set_model(Some(&tree_store.model().unwrap()));
+            if let Ok(mut new_store) = macmbx::store::Store::open(&mb_dir) {
+                sb.refresh(&mut new_store);
             }
         });
     }
@@ -686,23 +728,14 @@ fn build_ui(app: &gtk4::Application) {
     mb_rename_btn.set_has_frame(false);
     {
         let st = state.clone();
-        let stree = sidebar_tree.clone();
+        let sb = sidebar.clone();
+        let sel_mb = selected_mailbox.clone();
         mb_rename_btn.connect_clicked(move |_| {
-            let sel = stree.selection();
-            if let Some((model, iter)) = sel.selected() {
-                let old_path: String = model.get(&iter, sidebar::COL_PATH);
-                let old_name: String = model.get(&iter, sidebar::COL_NAME);
-                let is_dir: bool = model.get(&iter, sidebar::COL_IS_DIR);
+            let info = sel_mb.borrow().clone();
+            if let Some((old_path, old_name, _is_dir)) = info {
                 if old_path.is_empty() { return; }
                 // Don't rename special mailboxes
                 if ["In", "Out", "Trash", "Junk"].contains(&old_name.as_str()) { return; }
-                // Simple rename dialog
-                let dlg = gtk4::AlertDialog::builder()
-                    .message(&format!("Rename '{}'", old_name))
-                    .detail("Enter new name:")
-                    .build();
-                // GTK4 AlertDialog doesn't have text entry — use a simple approach
-                // For now just append " (renamed)" as proof of concept
                 let old = std::path::PathBuf::from(&old_path);
                 if let Some(parent) = old.parent() {
                     let new_name = format!("{}_renamed", old_name);
@@ -710,9 +743,8 @@ fn build_ui(app: &gtk4::Application) {
                     let _ = std::fs::rename(&old, &new_path);
                     let s = st.borrow();
                     let mb_dir = s.data_dir.join("mailboxes");
-                    if let Ok(new_store) = macmbx::store::Store::open(&mb_dir) {
-                        let new_tree = sidebar::build_sidebar(&new_store);
-                        stree.set_model(Some(&new_tree.model().unwrap()));
+                    if let Ok(mut new_store) = macmbx::store::Store::open(&mb_dir) {
+                        sb.refresh(&mut new_store);
                     }
                 }
             }
@@ -725,13 +757,11 @@ fn build_ui(app: &gtk4::Application) {
     mb_delete_btn.set_has_frame(false);
     {
         let st = state.clone();
-        let stree = sidebar_tree.clone();
+        let sb = sidebar.clone();
+        let sel_mb = selected_mailbox.clone();
         mb_delete_btn.connect_clicked(move |_| {
-            let sel = stree.selection();
-            if let Some((model, iter)) = sel.selected() {
-                let path: String = model.get(&iter, sidebar::COL_PATH);
-                let name: String = model.get(&iter, sidebar::COL_NAME);
-                let is_dir: bool = model.get(&iter, sidebar::COL_IS_DIR);
+            let info = sel_mb.borrow().clone();
+            if let Some((path, name, is_dir)) = info {
                 if path.is_empty() { return; }
                 // Don't delete special mailboxes
                 if ["In", "Out", "Trash", "Junk"].contains(&name.as_str()) { return; }
@@ -746,9 +776,8 @@ fn build_ui(app: &gtk4::Application) {
                 }
                 let s = st.borrow();
                 let mb_dir = s.data_dir.join("mailboxes");
-                if let Ok(new_store) = macmbx::store::Store::open(&mb_dir) {
-                    let new_tree = sidebar::build_sidebar(&new_store);
-                    stree.set_model(Some(&new_tree.model().unwrap()));
+                if let Ok(mut new_store) = macmbx::store::Store::open(&mb_dir) {
+                    sb.refresh(&mut new_store);
                 }
             }
         });
@@ -1040,8 +1069,8 @@ fn build_ui(app: &gtk4::Application) {
         });
         app.add_action(&lh_action);
 
-        // Find / Search — opens search tab with real search
-        let find_action = gio::SimpleAction::new("find", None);
+        // Search — opens cross-mailbox search tab (Cmd+Shift+F)
+        let find_action = gio::SimpleAction::new("search", None);
         let nb = content_notebook.clone();
         let st = state.clone();
         find_action.connect_activate(move |_, _| {
@@ -1074,6 +1103,23 @@ fn build_ui(app: &gtk4::Application) {
             });
         });
         app.add_action(&find_action);
+
+        // Find in current editor — toggles find bar in active tab (Cmd+F)
+        {
+            let nb = content_notebook.clone();
+            let find_in_editor = gio::SimpleAction::new("find", None);
+            find_in_editor.connect_activate(move |_, _| {
+                toggle_find_bar_in_current_page(&nb);
+            });
+            app.add_action(&find_in_editor);
+
+            let nb2 = content_notebook.clone();
+            let find_replace = gio::SimpleAction::new("find-replace", None);
+            find_replace.connect_activate(move |_, _| {
+                toggle_find_bar_in_current_page(&nb2);
+            });
+            app.add_action(&find_replace);
+        }
 
         // New Message — opens compose tab
         let newmsg_action = gio::SimpleAction::new("new-message", None);
@@ -1248,6 +1294,44 @@ fn build_ui(app: &gtk4::Application) {
             app.add_action(&redir_action);
         }
 
+        // ── Make Filter ──
+        {
+            let mf_action = gio::SimpleAction::new("make-filter", None);
+            let nb = content_notebook.clone();
+            let st = state.clone();
+            mf_action.connect_activate(move |_, _| {
+                let sel = get_selected_msg(&nb);
+                if let Some((mbox_path, idx, tree, _iter)) = sel {
+                    if let Ok(toc) = macmbx::toc::Toc::open(&mbox_path) {
+                        let msg = &toc.msgs[idx as usize];
+                        let from = msg.from.clone();
+                        let subj = msg.subject.clone();
+                        // Strip Re:/Fwd: from subject
+                        let subj = subj.trim_start_matches("Re: ")
+                            .trim_start_matches("RE: ")
+                            .trim_start_matches("Fwd: ")
+                            .trim_start_matches("FW: ")
+                            .to_string();
+                        let s = st.borrow();
+                        let data_dir = s.data_dir.clone();
+                        let filter_path = PathBuf::from(&data_dir).join("Filters");
+                        let mb_dir = PathBuf::from(&data_dir).join("mailboxes");
+                        let mailboxes: Vec<String> = std::fs::read_dir(&mb_dir)
+                            .map(|rd| rd.filter_map(|e| {
+                                let e = e.ok()?;
+                                let name = e.file_name().to_string_lossy().to_string();
+                                if name.ends_with(".toc") || e.file_type().ok()?.is_dir() { return None; }
+                                Some(name)
+                            }).collect())
+                            .unwrap_or_else(|_| vec!["In".into(), "Out".into(), "Trash".into(), "Junk".into()]);
+                        makefilter::show_make_filter_dialog(
+                            tree.upcast_ref(), &from, &subj, &filter_path, mailboxes);
+                    }
+                }
+            });
+            app.add_action(&mf_action);
+        }
+
         // ── Delete ──
         {
             let del_action = gio::SimpleAction::new("delete", None);
@@ -1321,11 +1405,15 @@ fn build_ui(app: &gtk4::Application) {
                                 if is_html {
                                     ctrl.insert_markup(hdr_len, &body);
                                 } else {
-                                    ctrl.insert_text(hdr_len, &body, -1);
+                                    let concentrated = preview_concentrate(&body);
+                                    ctrl.insert_text(hdr_len, &concentrated, -1);
+                                    urlhandler::linkify(&ctrl, &concentrated, hdr_len);
                                 }
                             } else {
                                 let body = find_body(&raw_str);
-                                ctrl.insert_text(hdr_len, body, -1);
+                                let concentrated = preview_concentrate(body);
+                                ctrl.insert_text(hdr_len, &concentrated, -1);
+                                urlhandler::linkify(&ctrl, &concentrated, hdr_len);
                             }
 
                             reditctrl::print::print_document(
@@ -1354,10 +1442,15 @@ fn build_ui(app: &gtk4::Application) {
                     let dest_path = st.borrow().data_dir.join("mailboxes").join(&dest);
                     if let Ok(mut src_toc) = macmbx::toc::Toc::open(&mbox_path) {
                         if let Ok(mut dst_toc) = macmbx::toc::Toc::open_or_create(&dest_path) {
+                            let msg_hash = src_toc.msgs[idx as usize].msg_id_hash;
                             match macmbx::ops::transfer(&mut src_toc, idx as usize, &mut dst_toc, false) {
-                                Ok(_) => {
+                                Ok(dst_idx) => {
                                     let _ = src_toc.save();
                                     let _ = dst_toc.save();
+                                    // Record for undo (port of oops.c AddXfUndoSum)
+                                    st.borrow_mut().xf_undo.clear();
+                                    st.borrow_mut().xf_undo.record(
+                                        Path::new(&mbox_path), &dest_path, msg_hash, dst_idx);
                                     // Remove from visible list
                                     if let Some(model) = tree.model() {
                                         if let Ok(store) = model.downcast::<gtk4::ListStore>() {
@@ -1552,8 +1645,8 @@ fn build_ui(app: &gtk4::Application) {
     toolbar.append(&tb_send);
 
     toolbar.append(&gtk4::Separator::new(gtk4::Orientation::Vertical));
-    let tb_find = tb_btn("edit-find-symbolic", "Find");
-    tb_find.set_action_name(Some("app.find"));
+    let tb_find = tb_btn("edit-find-symbolic", "Search Mailboxes");
+    tb_find.set_action_name(Some("app.search"));
     let tb_addr = tb_btn("contact-new-symbolic", "Address Book");
     tb_addr.set_action_name(Some("app.address-book"));
     let tb_filt = tb_btn("view-list-symbolic", "Filters");
@@ -1893,50 +1986,22 @@ fn build_ui(app: &gtk4::Application) {
         let initial = saved_theme.min(THEME_COUNT - 1);
         *theme_idx.borrow_mut() = initial;
         apply_theme(initial, &theme_provider.borrow(), &win);
+        apply_sidebar_theme(initial, &sidebar);
 
         let conf_for_theme = state.borrow().conf.clone();
+        let sb_for_theme = sidebar.clone();
         theme_btn.connect_clicked(move |_| {
             let mut idx = theme_idx.borrow_mut();
             *idx = (*idx + 1) % THEME_COUNT;
             apply_theme(*idx, &theme_provider.borrow(), &win);
+            apply_sidebar_theme(*idx, &sb_for_theme);
             // Persist theme choice
             conf_for_theme.borrow_mut().set_int("theme", "active_theme", *idx as i64);
             let _ = conf_for_theme.borrow_mut().save();
         });
     }
 
-    // ── Sidebar expand persistence — restore saved expand state ──
-    {
-        let expanded_str = state.borrow().conf.borrow()
-            .get("sidebar", "expanded_paths").unwrap_or("").to_string();
-        if !expanded_str.is_empty() {
-            // Collapse all first, then expand saved paths
-            sidebar_tree.collapse_all();
-            for path_str in expanded_str.split(';') {
-                if let Some(tp) = gtk4::TreePath::from_string(path_str) {
-                    sidebar_tree.expand_row(&tp, false);
-                }
-            }
-        }
-        // Save expand state on collapse/expand
-        let conf_for_expand = state.borrow().conf.clone();
-        let tree_for_expand = sidebar_tree.clone();
-        let save_expand = Rc::new(move || {
-            let mut paths = Vec::new();
-            tree_for_expand.map_expanded_rows(|_tree, path| {
-                if let Some(s) = path.to_str() {
-                    paths.push(s.to_string());
-                }
-            });
-            conf_for_expand.borrow_mut().set("sidebar", "expanded_paths", &paths.join(";"));
-            let _ = conf_for_expand.borrow_mut().save();
-        });
-
-        let se = save_expand.clone();
-        sidebar_tree.connect_row_expanded(move |_, _, _| { se(); });
-        let se = save_expand.clone();
-        sidebar_tree.connect_row_collapsed(move |_, _, _| { se(); });
-    }
+    // Sidebar expand persistence is handled internally by the SidebarWidget.
 
     // ── Sidebar right-click context menu ──
     {
@@ -1957,36 +2022,29 @@ fn build_ui(app: &gtk4::Application) {
         });
 
         let popover = gtk4::PopoverMenu::from_model(Some(&menu));
-        popover.set_parent(&sidebar_tree);
+        popover.set_parent(&sidebar.widget);
         popover.set_has_arrow(false);
 
-        // Right-click gesture — select the row under cursor then show menu
+        // Right-click gesture — show context menu
         let gesture = gtk4::GestureClick::new();
         gesture.set_button(3);
-        let stree = sidebar_tree.clone();
         let pop = popover.clone();
         gesture.connect_pressed(move |_g, _n, x, y| {
-            // Select the row at click position
-            if let Some((Some(path), _, _, _)) = stree.path_at_pos(x as i32, y as i32) {
-                stree.selection().select_path(&path);
-            }
             let rect = gtk4::gdk::Rectangle::new(x as i32, y as i32, 1, 1);
             pop.set_pointing_to(Some(&rect));
             pop.popup();
         });
-        sidebar_tree.add_controller(gesture);
+        sidebar.widget.add_controller(gesture);
 
         // Register context menu actions
         // Open
         {
             let a = gio::SimpleAction::new("open-mailbox-ctx", None);
-            let stree = sidebar_tree.clone();
+            let sel_mb = selected_mailbox.clone();
             let open = open_mailbox_tab.clone();
             a.connect_activate(move |_, _| {
-                if let Some((model, iter)) = stree.selection().selected() {
-                    let path: String = model.get(&iter, sidebar::COL_PATH);
-                    let name: String = model.get(&iter, sidebar::COL_NAME);
-                    let is_dir: bool = model.get(&iter, sidebar::COL_IS_DIR);
+                let info = sel_mb.borrow().clone();
+                if let Some((path, name, is_dir)) = info {
                     if !is_dir && !path.is_empty() {
                         open(&path, &name);
                     }
@@ -1998,7 +2056,7 @@ fn build_ui(app: &gtk4::Application) {
         {
             let a = gio::SimpleAction::new("ctx-new-mailbox", None);
             let st = state.clone();
-            let stree = sidebar_tree.clone();
+            let sb = sidebar.clone();
             a.connect_activate(move |_, _| {
                 let s = st.borrow();
                 let mb_dir = s.data_dir.join("mailboxes");
@@ -2007,9 +2065,8 @@ fn build_ui(app: &gtk4::Application) {
                 while mb_dir.join(&name).exists() { i += 1; name = format!("New Mailbox {}", i); }
                 if std::fs::File::create(mb_dir.join(&name)).is_ok() {
                     let _ = macmbx::toc::Toc::open_or_create(&mb_dir.join(&name));
-                    if let Ok(ns) = macmbx::store::Store::open(&mb_dir) {
-                        let new_tree = sidebar::build_sidebar(&ns);
-                        stree.set_model(Some(&new_tree.model().unwrap()));
+                    if let Ok(mut ns) = macmbx::store::Store::open(&mb_dir) {
+                        sb.refresh(&mut ns);
                     }
                 }
             });
@@ -2019,7 +2076,7 @@ fn build_ui(app: &gtk4::Application) {
         {
             let a = gio::SimpleAction::new("ctx-new-folder", None);
             let st = state.clone();
-            let stree = sidebar_tree.clone();
+            let sb = sidebar.clone();
             a.connect_activate(move |_, _| {
                 let s = st.borrow();
                 let mb_dir = s.data_dir.join("mailboxes");
@@ -2027,9 +2084,8 @@ fn build_ui(app: &gtk4::Application) {
                 let mut i = 1;
                 while mb_dir.join(&name).exists() { i += 1; name = format!("New Folder {}", i); }
                 let _ = std::fs::create_dir_all(mb_dir.join(&name));
-                if let Ok(ns) = macmbx::store::Store::open(&mb_dir) {
-                    let new_tree = sidebar::build_sidebar(&ns);
-                    stree.set_model(Some(&new_tree.model().unwrap()));
+                if let Ok(mut ns) = macmbx::store::Store::open(&mb_dir) {
+                    sb.refresh(&mut ns);
                 }
             });
             app.add_action(&a);
@@ -2038,11 +2094,11 @@ fn build_ui(app: &gtk4::Application) {
         {
             let a = gio::SimpleAction::new("ctx-rename", None);
             let st = state.clone();
-            let stree = sidebar_tree.clone();
+            let sb = sidebar.clone();
+            let sel_mb = selected_mailbox.clone();
             a.connect_activate(move |_, _| {
-                if let Some((model, iter)) = stree.selection().selected() {
-                    let path: String = model.get(&iter, sidebar::COL_PATH);
-                    let name: String = model.get(&iter, sidebar::COL_NAME);
+                let info = sel_mb.borrow().clone();
+                if let Some((path, name, _is_dir)) = info {
                     if path.is_empty() || ["In","Out","Trash","Junk"].contains(&name.as_str()) { return; }
                     let old = std::path::PathBuf::from(&path);
                     if let Some(parent) = old.parent() {
@@ -2055,9 +2111,8 @@ fn build_ui(app: &gtk4::Application) {
                         }
                         let s = st.borrow();
                         let mb_dir = s.data_dir.join("mailboxes");
-                        if let Ok(ns) = macmbx::store::Store::open(&mb_dir) {
-                            let new_tree = sidebar::build_sidebar(&ns);
-                            stree.set_model(Some(&new_tree.model().unwrap()));
+                        if let Ok(mut ns) = macmbx::store::Store::open(&mb_dir) {
+                            sb.refresh(&mut ns);
                         }
                     }
                 }
@@ -2068,12 +2123,11 @@ fn build_ui(app: &gtk4::Application) {
         {
             let a = gio::SimpleAction::new("ctx-delete", None);
             let st = state.clone();
-            let stree = sidebar_tree.clone();
+            let sb = sidebar.clone();
+            let sel_mb = selected_mailbox.clone();
             a.connect_activate(move |_, _| {
-                if let Some((model, iter)) = stree.selection().selected() {
-                    let path: String = model.get(&iter, sidebar::COL_PATH);
-                    let name: String = model.get(&iter, sidebar::COL_NAME);
-                    let is_dir: bool = model.get(&iter, sidebar::COL_IS_DIR);
+                let info = sel_mb.borrow().clone();
+                if let Some((path, name, is_dir)) = info {
                     if path.is_empty() || ["In","Out","Trash","Junk"].contains(&name.as_str()) { return; }
                     let p = std::path::PathBuf::from(&path);
                     if is_dir { let _ = std::fs::remove_dir_all(&p); }
@@ -2083,9 +2137,8 @@ fn build_ui(app: &gtk4::Application) {
                     }
                     let s = st.borrow();
                     let mb_dir = s.data_dir.join("mailboxes");
-                    if let Ok(ns) = macmbx::store::Store::open(&mb_dir) {
-                        let new_tree = sidebar::build_sidebar(&ns);
-                        stree.set_model(Some(&new_tree.model().unwrap()));
+                    if let Ok(mut ns) = macmbx::store::Store::open(&mb_dir) {
+                        sb.refresh(&mut ns);
                     }
                 }
             });
@@ -2094,11 +2147,10 @@ fn build_ui(app: &gtk4::Application) {
         // Compact
         {
             let a = gio::SimpleAction::new("ctx-compact", None);
-            let stree = sidebar_tree.clone();
+            let sel_mb = selected_mailbox.clone();
             a.connect_activate(move |_, _| {
-                if let Some((model, iter)) = stree.selection().selected() {
-                    let path: String = model.get(&iter, sidebar::COL_PATH);
-                    let is_dir: bool = model.get(&iter, sidebar::COL_IS_DIR);
+                let info = sel_mb.borrow().clone();
+                if let Some((path, _name, is_dir)) = info {
                     if path.is_empty() || is_dir { return; }
                     if let Ok(mut toc) = macmbx::toc::Toc::open(&path) {
                         let removed = macmbx::compact::compact(&mut toc).unwrap_or(0);
@@ -2110,27 +2162,18 @@ fn build_ui(app: &gtk4::Application) {
         }
     }
 
-    // ── Sidebar double-click → open mailbox tab ──
+    // ── Sidebar activation → open mailbox tab + update selected_mailbox ──
     {
         let open = open_mailbox_tab.clone();
-        sidebar_tree.connect_row_activated(move |tree, path, _col| {
-            let model = tree.model().unwrap();
-            let iter = model.iter(path).unwrap();
-            let mbox_path: String = model.get(&iter, sidebar::COL_PATH);
-            let name: String = model.get(&iter, sidebar::COL_NAME);
-            let is_dir: bool = model.get(&iter, sidebar::COL_IS_DIR);
-
-            if is_dir {
-                if tree.row_expanded(path) {
-                    tree.collapse_row(path);
-                } else {
-                    tree.expand_row(path, false);
-                }
-                return;
+        let sel_mb = selected_mailbox.clone();
+        *sidebar.on_activate.borrow_mut() = Some(Box::new(move |path: &str, name: &str, is_dir: bool| {
+            // Update the shared selected mailbox state
+            *sel_mb.borrow_mut() = Some((path.to_string(), name.to_string(), is_dir));
+            // If it's a mailbox (not a folder), open it
+            if !is_dir {
+                open(path, name);
             }
-
-            open(&mbox_path, &name);
-        });
+        }));
     }
 
     window.present();
@@ -2802,6 +2845,10 @@ fn build_mailbox_tab(
         .vexpand(true)
         .build();
     vpaned.set_start_child(Some(&scroll));
+    // NOTE: Drag-and-drop from message list to sidebar is deferred to the
+    // custom list widget rewrite. GTK4 DragSource conflicts with TreeView's
+    // internal gesture handling. Message transfer works via Transfer menu,
+    // right-click context menu, and keyboard shortcuts.
 
     // ── Preview pane ──
     let preview_box = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
@@ -2881,6 +2928,156 @@ fn build_mailbox_tab(
                 }
             }
         });
+    }
+
+    // ── Right-click context menu on message list ──
+    // (port of boxact.c message context menu — Make Filter, Mark, Delete, Transfer)
+    {
+        let toc_ctx = Rc::new(macmbx::toc::Toc::open(mbox_path)
+            .unwrap_or_else(|_| macmbx::toc::Toc::new(mbox_path)));
+        let tree_ctx = tree.clone();
+        let mbox_ctx = mbox_path.to_string();
+        let conf_ctx = conf.clone();
+        let gesture = gtk4::GestureClick::new();
+        gesture.set_button(3);
+        gesture.connect_released(move |g, _n, x, y| {
+            let Some(widget) = g.widget() else { return };
+            let Some(tv) = widget.downcast_ref::<gtk4::TreeView>() else { return };
+
+            // Select the row under cursor
+            if let Some((Some(path), _, _, _)) = tv.path_at_pos(x as i32, y as i32) {
+                tv.selection().select_path(&path);
+            }
+
+            // Get selected message
+            let (rows, model) = tv.selection().selected_rows();
+            if rows.is_empty() { return; }
+            let iter = match model.iter(&rows[0]) {
+                Some(i) => i,
+                None => return,
+            };
+            let idx: i32 = model.get(&iter, 0);
+            let from_text: String = model.get(&iter, 3);
+            let subject_text: String = model.get(&iter, 6);
+
+            // Build context menu
+            let popover = gtk4::Popover::new();
+            popover.set_parent(&widget);
+            popover.set_pointing_to(Some(&gdk4::Rectangle::new(x as i32, y as i32, 1, 1)));
+            popover.set_autohide(true);
+
+            let menu_box = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+
+            let add_item = |label: &str| -> gtk4::Button {
+                let btn = gtk4::Button::with_label(label);
+                btn.set_has_frame(false);
+                btn.set_halign(gtk4::Align::Fill);
+                if let Some(child) = btn.first_child() {
+                    if let Some(lbl) = child.downcast_ref::<gtk4::Label>() {
+                        lbl.set_halign(gtk4::Align::Start);
+                    }
+                }
+                btn
+            };
+
+            // Make Filter
+            let mf_btn = add_item("Make Filter...");
+            {
+                let pop = popover.clone();
+                let from = from_text.clone();
+                let subj = subject_text.clone();
+                let conf_c = conf_ctx.clone();
+                let w = widget.clone();
+                mf_btn.connect_clicked(move |_| {
+                    pop.popdown();
+                    let home = std::env::var("HOME").unwrap_or_default();
+                    let data_dir = PathBuf::from(&home).join(".local/share/geudora");
+                    let filter_path = data_dir.join("Filters");
+                    let mb_dir = data_dir.join("mailboxes");
+                    let mailboxes: Vec<String> = std::fs::read_dir(&mb_dir)
+                        .map(|rd| rd.filter_map(|e| {
+                            let e = e.ok()?;
+                            let name = e.file_name().to_string_lossy().to_string();
+                            if name.ends_with(".toc") || e.file_type().ok()?.is_dir() { return None; }
+                            Some(name)
+                        }).collect())
+                        .unwrap_or_else(|_| vec!["In".into(), "Out".into(), "Trash".into(), "Junk".into()]);
+                    makefilter::show_make_filter_dialog(&w, &from, &subj, &filter_path, mailboxes);
+                });
+            }
+            menu_box.append(&mf_btn);
+            menu_box.append(&gtk4::Separator::new(gtk4::Orientation::Horizontal));
+
+            // Mark Read / Unread
+            let mr_btn = add_item("Mark Read");
+            {
+                let pop = popover.clone();
+                let mbox = mbox_ctx.clone();
+                let model_ref = model.clone();
+                let iter_ref = iter.clone();
+                mr_btn.connect_clicked(move |_| {
+                    pop.popdown();
+                    if let Ok(mut t) = macmbx::toc::Toc::open(&mbox) {
+                        let i = idx as usize;
+                        if i < t.msgs.len() {
+                            t.msgs[i].state = macmbx::toc::State::Read;
+                            let _ = t.save();
+                            if let Some(store) = model_ref.downcast_ref::<gtk4::ListStore>() {
+                                store.set(&iter_ref, &[(7, &400i32), (1, &"".to_value())]);
+                            }
+                        }
+                    }
+                });
+            }
+            menu_box.append(&mr_btn);
+
+            let mu_btn = add_item("Mark Unread");
+            {
+                let pop = popover.clone();
+                let mbox = mbox_ctx.clone();
+                let model_ref = model.clone();
+                let iter_ref = iter.clone();
+                mu_btn.connect_clicked(move |_| {
+                    pop.popdown();
+                    if let Ok(mut t) = macmbx::toc::Toc::open(&mbox) {
+                        let i = idx as usize;
+                        if i < t.msgs.len() {
+                            t.msgs[i].state = macmbx::toc::State::Unread;
+                            let _ = t.save();
+                            if let Some(store) = model_ref.downcast_ref::<gtk4::ListStore>() {
+                                store.set(&iter_ref, &[(7, &700i32), (1, &"mail-unread-symbolic".to_value())]);
+                            }
+                        }
+                    }
+                });
+            }
+            menu_box.append(&mu_btn);
+
+            menu_box.append(&gtk4::Separator::new(gtk4::Orientation::Horizontal));
+
+            // Delete
+            let del_btn = add_item("Delete");
+            {
+                let pop = popover.clone();
+                let mbox = mbox_ctx.clone();
+                del_btn.connect_clicked(move |_| {
+                    pop.popdown();
+                    if let Ok(mut t) = macmbx::toc::Toc::open(&mbox) {
+                        let i = idx as usize;
+                        if i < t.msgs.len() {
+                            t.msgs[i].flags.insert(macmbx::toc::MsgFlags::DELETED);
+                            let _ = t.save();
+                        }
+                    }
+                });
+            }
+            menu_box.append(&del_btn);
+
+            popover.set_child(Some(&menu_box));
+            popover.connect_closed(|p| p.unparent());
+            popover.popup();
+        });
+        tree.add_controller(gesture);
     }
 
     // ── Double-click message → open in new tab ──
@@ -3340,6 +3537,30 @@ fn apply_theme(idx: usize, provider: &gtk4::CssProvider, window: &gtk4::Applicat
     eprintln!("Theme: {}", THEME_NAMES[idx]);
 }
 
+fn apply_sidebar_theme(idx: usize, sb: &sidebar::SidebarWidget) {
+    fn hex3(s: &str) -> (f64, f64, f64) {
+        let s = s.trim_start_matches('#');
+        let r = u8::from_str_radix(&s[0..2], 16).unwrap_or(128) as f64 / 255.0;
+        let g = u8::from_str_radix(&s[2..4], 16).unwrap_or(128) as f64 / 255.0;
+        let b = u8::from_str_radix(&s[4..6], 16).unwrap_or(128) as f64 / 255.0;
+        (r, g, b)
+    }
+    let p = &PALETTES[idx];
+    let is_dark = idx == 1 || idx == 2 || idx == 4;
+    let bg = hex3(p.surface);
+    let text = hex3(p.text);
+    let accent = hex3(p.accent);
+    sb.set_theme(sidebar::ThemeColors {
+        bg,
+        text,
+        hover: if is_dark { (1.0, 1.0, 1.0, 0.06) } else { (0.0, 0.0, 0.0, 0.04) },
+        sel_bg: (accent.0, accent.1, accent.2, 0.18),
+        accent,
+        badge_bg: accent,
+        badge_fg: (1.0, 1.0, 1.0),
+    });
+}
+
 // ══════════════════════════════════════════════════════════════════════
 // Message view — port of main_eudora.c create_message_view + helpers
 // ══════════════════════════════════════════════════════════════════════
@@ -3399,6 +3620,25 @@ fn find_body(raw: &str) -> &str {
         return &raw[pos + 2..];
     }
     raw
+}
+
+/// Content Concentrator profile for the preview pane (port of CONCON_PREVIEW_PROFILE).
+/// Shows body + shallow quotes + attributions, hides signature, limits quoted text.
+fn preview_concentrate(text: &str) -> String {
+    let profile = macmbx::concentrator::Profile {
+        show_body: true,
+        show_quoted: true,
+        max_quote_depth: 2,
+        show_attribution: true,
+        show_signature: false,
+        show_forwarded: true,
+        show_attachments: true,
+        max_body_chars: 0,
+        max_body_paras: 0,
+        max_quoted_chars: 4096,
+        ellipsis: true,
+    };
+    macmbx::concentrator::summarize(text, &profile)
 }
 
 /// Build a styled header row: "Name:  value" (port of make_header_row).
@@ -3784,14 +4024,47 @@ fn create_message_view_full(
         editor.set_theme_colors(pc(p.surface), pc(p.text), pc(p.text), pc(p.accent));
     }
 
-    // Insert body — HTML as markup, plain as text
+    // Insert body — HTML as markup, plain text gets concentrated then linkified
+    // (port of url.c PeteURLScan + concentrator.c ConConMess preview path)
     if is_html {
         editor.ctrl.insert_markup(0, body_text);
     } else {
-        editor.ctrl.set_text(body_text, -1);
+        // Apply Content Concentrator to plain text (port of ConConMess)
+        let concentrated = preview_concentrate(body_text);
+        editor.ctrl.set_text(&concentrated, -1);
+        urlhandler::linkify(&editor.ctrl, &concentrated, 0);
     }
     // Read-only
     editor.ctrl.set_editable(false);
+
+    // URL click handling — detect URLs in body, open in browser on click
+    // (port of url.c PeteLinkAt + OpenOtherURLPtr)
+    {
+        let ed_ctrl = editor.ctrl.clone();
+        let gesture = gtk4::GestureClick::new();
+        gesture.set_button(1);
+        gesture.connect_released(move |_g, _n, _x, _y| {
+            let caret = ed_ctrl.get_caret_offset();
+            // Check styled link first (from linkify or HTML <a href>)
+            if let Some(url) = ed_ctrl.doc.get_link_at(caret) {
+                urlhandler::open_url(&url);
+                return;
+            }
+            // Fallback: scan plain text for URLs at caret position
+            let text = ed_ctrl.get_text();
+            let urls = urlhandler::find_urls(&text);
+            let char_pos = caret as usize;
+            for (start, end, url) in &urls {
+                let c_start = text[..*start].chars().count();
+                let c_end = text[..*end].chars().count();
+                if char_pos >= c_start && char_pos <= c_end {
+                    urlhandler::open_url(&url);
+                    return;
+                }
+            }
+        });
+        editor.widget().add_controller(gesture);
+    }
 
     // Wire print button — print the editor's document directly
     // (same document that has images + styles loaded)

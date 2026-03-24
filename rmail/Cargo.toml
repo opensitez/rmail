@@ -13,6 +13,7 @@ path = "src/main.rs"
 crispy = { path = "../crispy" }
 macmbx = { path = "../macmbx" }
 reditctrl = { path = "../reditctrl" }
+rwidgets = { path = "../rwidgets" }
 
 gtk4 = { version = "0.9", features = ["v4_10"] }
 gdk4 = "0.9"
@@ -23,6 +24,7 @@ cairo-rs = "0.20"
 pangocairo = "0.20"
 gdk-pixbuf = "0.20"
 
+native-tls = "0.2"
 log = "0.4"
 env_logger = "0.11"
 libc = "0.2"

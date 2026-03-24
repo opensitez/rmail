@@ -440,6 +440,9 @@ struct CrispySmtp(crispy::smtp::SmtpSession<crispy::transport::TcpTransport>);
 unsafe impl Send for CrispySmtp {}
 
 impl SmtpClient for CrispySmtp {
+    fn set_proxy(&mut self, proxy: &ProxyConfig) {
+        apply_crispy_proxy(&mut self.0.tp, proxy);
+    }
     fn connect(&mut self, server: &str, port: u16, sec: SmtpSecurity) -> io::Result<()> {
         let s = match sec { SmtpSecurity::Plain => crispy::smtp::Security::Plain,
                            SmtpSecurity::StartTls => crispy::smtp::Security::StartTls,
@@ -458,6 +461,9 @@ struct CrispyPop3(crispy::pop3::Pop3Session<crispy::transport::TcpTransport>);
 unsafe impl Send for CrispyPop3 {}
 
 impl Pop3Client for CrispyPop3 {
+    fn set_proxy(&mut self, proxy: &ProxyConfig) {
+        apply_crispy_proxy(&mut self.0.tp, proxy);
+    }
     fn connect(&mut self, server: &str, port: u16, sec: Pop3Security) -> io::Result<()> {
         let s = match sec { Pop3Security::Plain => crispy::pop3::Pop3Security::Plain,
                            Pop3Security::Stls => crispy::pop3::Pop3Security::Stls,
@@ -486,6 +492,9 @@ struct CrispyImap(crispy::imap::ImapSession<crispy::transport::TcpTransport>);
 unsafe impl Send for CrispyImap {}
 
 impl ImapClient for CrispyImap {
+    fn set_proxy(&mut self, proxy: &ProxyConfig) {
+        apply_crispy_proxy(&mut self.0.tp, proxy);
+    }
     fn connect(&mut self, server: &str, port: u16, sec: ImapSecurity) -> io::Result<()> {
         let s = match sec { ImapSecurity::Plain => crispy::imap::ImapSecurity::Plain,
                            ImapSecurity::StartTls => crispy::imap::ImapSecurity::StartTls,
@@ -513,6 +522,21 @@ impl ImapClient for CrispyImap {
     fn noop(&mut self) -> io::Result<()> { self.0.noop().map_err(io_err) }
     fn close(&mut self) { self.0.close(); }
     fn is_connected(&self) -> bool { self.0.connected }
+}
+
+/// Convert macmbx ProxyConfig to crispy ProxyConfig and apply to transport.
+fn apply_crispy_proxy(tp: &mut crispy::transport::TcpTransport, proxy: &ProxyConfig) {
+    let cp = if proxy.proxy_type == "socks5" {
+        crispy::transport::ProxyConfig::socks5(&proxy.host, proxy.port)
+    } else {
+        crispy::transport::ProxyConfig::http(&proxy.host, proxy.port)
+    };
+    let cp = if let (Some(ref u), Some(ref p)) = (&proxy.username, &proxy.password) {
+        cp.with_auth(u, p)
+    } else {
+        cp
+    };
+    tp.set_proxy(cp);
 }
 
 fn io_err(e: impl std::fmt::Display) -> io::Error {
@@ -644,7 +668,7 @@ impl PostProcessor for RealPostProcessor {
         let read_body = |t: &macmbx::toc::Toc, i: usize| -> Option<String> {
             macmbx::ops::read_body(t, i).ok().map(|b| String::from_utf8_lossy(&b).to_string())
         };
-        macmbx::junk::score_box(&cfg, toc, read_headers, read_body);
+        macmbx::junk::score_box(&cfg, toc, read_headers, read_body, None);
 
         // Move scored spam to Junk mailbox (port of macmbx_junk_move_spam)
         if let Ok(store) = macmbx::store::Store::open(&self.mailboxes_dir) {
