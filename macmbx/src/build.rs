@@ -218,10 +218,48 @@ fn parse_date(date: &str) -> Option<ParsedDate> {
 
     let s = s.trim_start();
 
-    // Tokenize remaining
-    let tokens: Vec<&str> = s.split(|c: char| c == ' ' || c == '\t' || c == '-' || c == '/')
-        .filter(|t| !t.is_empty())
-        .collect();
+    // Tokenize remaining: split on whitespace and date separators (- /),
+    // but preserve +HHMM / -HHMM timezone offsets.
+    let mut tokens: Vec<&str> = Vec::new();
+    {
+        let bytes = s.as_bytes();
+        let mut start = 0;
+        let len = bytes.len();
+        while start < len {
+            // skip delimiters
+            if bytes[start] == b' ' || bytes[start] == b'\t' || bytes[start] == b'/' {
+                start += 1;
+                continue;
+            }
+            // '-' is a delimiter UNLESS it's a timezone offset (followed by digits)
+            if bytes[start] == b'-' {
+                if start + 1 < len && bytes[start + 1].is_ascii_digit() {
+                    // looks like -HHMM timezone, keep as one token
+                    let end = start + 1 + bytes[start + 1..].iter().take_while(|b| b.is_ascii_digit()).count();
+                    tokens.push(&s[start..end]);
+                    start = end;
+                    continue;
+                }
+                start += 1;
+                continue;
+            }
+            // '+' followed by digits: timezone offset
+            if bytes[start] == b'+' && start + 1 < len && bytes[start + 1].is_ascii_digit() {
+                let end = start + 1 + bytes[start + 1..].iter().take_while(|b| b.is_ascii_digit()).count();
+                tokens.push(&s[start..end]);
+                start = end;
+                continue;
+            }
+            // regular token: consume until next delimiter
+            let end = bytes[start..].iter().position(|&b| b == b' ' || b == b'\t' || b == b'-' || b == b'/' || b == b'+')
+                .map(|p| start + p)
+                .unwrap_or(len);
+            if end > start {
+                tokens.push(&s[start..end]);
+            }
+            start = end;
+        }
+    }
 
     let mut day: i32 = 0;
     let mut mon: i32 = -1;
@@ -259,8 +297,9 @@ fn parse_date(date: &str) -> Option<ParsedDate> {
             }
         }
 
-        // Numeric token
-        if let Ok(num) = tok.parse::<i32>() {
+        // Numeric token (but not +/- timezone offsets)
+        if !tok.starts_with('+') && !tok.starts_with('-') && tok.parse::<i32>().is_ok() {
+            let num: i32 = tok.parse().unwrap();
             if num > 1900 && tok.len() == 4 {
                 year = num;
             } else if day == 0 && num >= 1 && num <= 31 {

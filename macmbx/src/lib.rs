@@ -36,3 +36,4 @@ pub mod spell;
 pub mod thread;
 pub mod concentrator;
 pub mod mailer;
+pub mod stats;

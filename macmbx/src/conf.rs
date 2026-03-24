@@ -525,16 +525,12 @@ mod tests {
     use super::*;
     use std::io::Write;
 
-    fn make_temp_ini(content: &str) -> PathBuf {
-        let dir = std::env::temp_dir();
-        let path = dir.join(format!("test_conf_{}.ini", std::process::id()));
+    fn make_temp_ini(content: &str) -> (tempfile::TempDir, PathBuf) {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("test.ini");
         let mut f = fs::File::create(&path).unwrap();
         f.write_all(content.as_bytes()).unwrap();
-        path
-    }
-
-    fn cleanup(path: &Path) {
-        let _ = fs::remove_file(path);
+        (tmp, path)
     }
 
     #[test]
@@ -552,7 +548,7 @@ mod tests {
 
     #[test]
     fn load_basic_ini() {
-        let path = make_temp_ini(
+        let (_tmp, path) = make_temp_ini(
             "\
 # Global comment
 global_key=global_val
@@ -578,21 +574,21 @@ alpha=beta
         assert!(sections.contains(&"section1"));
         assert!(sections.contains(&"section2"));
 
-        cleanup(&path);
+
     }
 
     #[test]
     fn case_insensitive_lookup() {
-        let path = make_temp_ini("[MySection]\nMyKey=MyValue\n");
+        let (_tmp, path) = make_temp_ini("[MySection]\nMyKey=MyValue\n");
         let conf = Conf::load(&path).unwrap();
         assert_eq!(conf.get("mysection", "mykey"), Some("MyValue"));
         assert_eq!(conf.get("MYSECTION", "MYKEY"), Some("MyValue"));
-        cleanup(&path);
+
     }
 
     #[test]
     fn get_typed_values() {
-        let path = make_temp_ini(
+        let (_tmp, path) = make_temp_ini(
             "\
 [test]
 count=42
@@ -617,7 +613,7 @@ yes_val=yes
         assert!(conf.get_bool("test", "yes_val", false));
         assert!(!conf.get_bool("test", "missing", false));
 
-        cleanup(&path);
+
     }
 
     #[test]
@@ -697,7 +693,8 @@ yes_val=yes
 
     #[test]
     fn save_and_reload() {
-        let path = std::env::temp_dir().join(format!("test_save_{}.ini", std::process::id()));
+        let _tmp = tempfile::tempdir().unwrap();
+        let path = _tmp.path().join("test_save.ini");
         {
             let mut conf = Conf::new();
             conf.set("", "global", "yes");
@@ -716,7 +713,7 @@ yes_val=yes
         assert!(conf2.get_bool("mail", "ssl", false));
         assert_eq!(conf2.get_int("mail", "timeout", 0), 30);
 
-        cleanup(&path);
+
     }
 
     #[test]
@@ -731,7 +728,7 @@ key=value
 
 key2=value2
 ";
-        let path = make_temp_ini(ini);
+        let (_tmp, path) = make_temp_ini(ini);
         let mut conf = Conf::load(&path).unwrap();
         conf.set("section", "key3", "value3");
         conf.save_as(&path).unwrap();
@@ -746,14 +743,14 @@ key2=value2
         assert!(content.contains("# Top comment"));
         assert!(content.contains("; Section comment"));
 
-        cleanup(&path);
+
     }
 
     // ── Account management tests ──
 
     #[test]
     fn dominant_account() {
-        let path = make_temp_ini(
+        let (_tmp, path) = make_temp_ini(
             "\
 [sending_mail]
 real_name=John Doe
@@ -785,12 +782,12 @@ ssl_pop_mode=1
         assert!(acct.leave_on_server);
         assert!(acct.enabled);
 
-        cleanup(&path);
+
     }
 
     #[test]
     fn dominant_account_imap() {
-        let path = make_temp_ini(
+        let (_tmp, path) = make_temp_ini(
             "\
 [checking_mail]
 use_imap=true
@@ -798,7 +795,7 @@ use_imap=true
         );
         let conf = Conf::load(&path).unwrap();
         assert_eq!(conf.get_dominant().account_type, "IMAP");
-        cleanup(&path);
+
     }
 
     #[test]
@@ -975,7 +972,8 @@ use_imap=true
 
     #[test]
     fn save_reload_with_accounts() {
-        let path = std::env::temp_dir().join(format!("test_acct_{}.ini", std::process::id()));
+        let _tmp = tempfile::tempdir().unwrap();
+        let path = _tmp.path().join("test_acct.ini");
 
         {
             let mut conf = Conf::new();
@@ -1003,7 +1001,7 @@ use_imap=true
         assert_eq!(got.account_type, "IMAP");
         assert!(got.leave_on_server);
 
-        cleanup(&path);
+
     }
 
     #[test]
@@ -1014,25 +1012,25 @@ use_imap=true
 
     #[test]
     fn whitespace_trimming_in_values() {
-        let path = make_temp_ini("[sec]\n  key  =  value with spaces  \n");
+        let (_tmp, path) = make_temp_ini("[sec]\n  key  =  value with spaces  \n");
         let conf = Conf::load(&path).unwrap();
         assert_eq!(conf.get("sec", "key"), Some("value with spaces"));
-        cleanup(&path);
+
     }
 
     #[test]
     fn empty_value() {
-        let path = make_temp_ini("[sec]\nkey=\n");
+        let (_tmp, path) = make_temp_ini("[sec]\nkey=\n");
         let conf = Conf::load(&path).unwrap();
         assert_eq!(conf.get("sec", "key"), Some(""));
-        cleanup(&path);
+
     }
 
     #[test]
     fn section_with_spaces() {
-        let path = make_temp_ini("[ my section ]\nkey=val\n");
+        let (_tmp, path) = make_temp_ini("[ my section ]\nkey=val\n");
         let conf = Conf::load(&path).unwrap();
         assert_eq!(conf.get("my section", "key"), Some("val"));
-        cleanup(&path);
+
     }
 }

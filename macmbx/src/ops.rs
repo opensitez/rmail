@@ -616,6 +616,96 @@ pub fn transfer_multi(
     transferred
 }
 
+// ── Transfer undo (port of oops.c XfUndo) ──
+
+/// Record of a single message transfer, for undo.
+#[derive(Debug, Clone)]
+pub struct XfUndoEntry {
+    /// Source mailbox path (where the message was before transfer).
+    pub src_path: PathBuf,
+    /// Destination mailbox path (where the message went).
+    pub dst_path: PathBuf,
+    /// Message serial number / msg_id_hash for identification.
+    pub msg_id_hash: i32,
+    /// Index in destination TOC at time of transfer.
+    pub dst_index: usize,
+}
+
+/// Stack of transfer undo records (port of oops.c XfUndoH).
+/// Holds the last batch of transfers so they can be reversed.
+#[derive(Debug, Default)]
+pub struct TransferUndo {
+    entries: Vec<XfUndoEntry>,
+}
+
+impl TransferUndo {
+    pub fn new() -> Self {
+        Self { entries: Vec::new() }
+    }
+
+    /// Clear undo history (called when a new unrelated action occurs).
+    pub fn clear(&mut self) {
+        self.entries.clear();
+    }
+
+    /// Record a transfer for undo.
+    pub fn record(&mut self, src_path: &Path, dst_path: &Path, msg_id_hash: i32, dst_index: usize) {
+        self.entries.push(XfUndoEntry {
+            src_path: src_path.to_path_buf(),
+            dst_path: dst_path.to_path_buf(),
+            msg_id_hash,
+            dst_index,
+        });
+    }
+
+    /// Whether there's anything to undo.
+    pub fn can_undo(&self) -> bool {
+        !self.entries.is_empty()
+    }
+
+    /// How many transfers in the last batch.
+    pub fn count(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Undo all recorded transfers: move each message back from dst to src.
+    /// Clears the undo stack after execution. Returns count of successful undos.
+    pub fn undo(&mut self) -> usize {
+        let mut undone = 0;
+        // Process in reverse order (last transfer first)
+        let entries: Vec<XfUndoEntry> = self.entries.drain(..).rev().collect();
+        for entry in &entries {
+            // Find the message in the destination TOC by msg_id_hash
+            let dst_toc = match Toc::open(&entry.dst_path) {
+                Ok(t) => t,
+                Err(_) => continue,
+            };
+            // Find message index by hash (it may have shifted)
+            let idx = dst_toc.msgs.iter().position(|m| {
+                m.msg_id_hash == entry.msg_id_hash
+                    && !m.flags.contains(MsgFlags::DELETED)
+            });
+            let idx = match idx {
+                Some(i) => i,
+                None => continue,
+            };
+
+            // Transfer it back
+            let mut dst_toc = dst_toc; // rebind as mutable
+            let mut src_toc = match Toc::open_or_create(&entry.src_path) {
+                Ok(t) => t,
+                Err(_) => continue,
+            };
+            if transfer(&mut dst_toc, idx, &mut src_toc, false).is_ok() {
+                let _ = dst_toc.save();
+                let _ = src_toc.save();
+                undone += 1;
+            }
+        }
+        undone
+    }
+}
+
 // ── Mailbox file operations ──
 
 /// Create a new empty mailbox (mbox file + .toc file).

@@ -1349,6 +1349,109 @@ impl Default for FilterSet {
 }
 
 // ================================================================
+// Make Filter (port of makefilter.c)
+// ================================================================
+
+/// Which field to match on when creating a filter from a message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MakeFilterMatch {
+    From,
+    Subject,
+    AnyRecipient,
+}
+
+/// Create a filter rule from message headers (port of makefilter.c CreateTheFilter).
+///
+/// `from` — sender address (From: header value).
+/// `subject` — subject line (Re:/Fwd: should already be stripped).
+/// `any_recipient` — combined To/Cc address (optional).
+/// `match_on` — which field to match.
+/// `transfer_to` — mailbox name/path to transfer to. Empty = no transfer action.
+///
+/// Returns a Rule ready to be added to a FilterSet via `add_rule()`.
+pub fn make_filter_rule(
+    from: &str,
+    subject: &str,
+    any_recipient: &str,
+    match_on: MakeFilterMatch,
+    transfer_to: &str,
+) -> Rule {
+    let (header, value) = match match_on {
+        MakeFilterMatch::From => ("From:".to_string(), from.to_string()),
+        MakeFilterMatch::Subject => ("Subject:".to_string(), subject.to_string()),
+        MakeFilterMatch::AnyRecipient => ("Any Recipient:".to_string(), any_recipient.to_string()),
+    };
+
+    let condition = Condition {
+        header: header.clone(),
+        verb: Verb::Contains,
+        value: value.clone(),
+        compiled_regex: None,
+    };
+
+    let mut actions = Vec::new();
+    if !transfer_to.is_empty() {
+        actions.push(Action {
+            action_type: ActionType::Transfer,
+            int_value: 0,
+            str_value: transfer_to.to_string(),
+        });
+    }
+
+    // Build filter name: "Header: value" (port of FILTER_NAME resource)
+    let hdr_short = header.trim_end_matches(':');
+    let name = if !value.is_empty() {
+        format!("{}: {}", hdr_short, value)
+    } else {
+        "Untitled".to_string()
+    };
+
+    Rule {
+        name,
+        id: 0, // assigned by add_rule
+        when: WHEN_INCOMING | WHEN_MANUAL,
+        conjunction: Conjunction::None,
+        conditions: vec![condition],
+        actions,
+        last_match: 0,
+    }
+}
+
+/// Auto-detect the best match field from available headers (port of SetUpFilterFromMess logic).
+/// Returns (match_type, suggested_mailbox_name).
+pub fn suggest_filter(from: &str, subject: &str, any_recipient: &str) -> (MakeFilterMatch, String) {
+    let match_on = if !from.is_empty() {
+        MakeFilterMatch::From
+    } else if !any_recipient.is_empty() {
+        MakeFilterMatch::AnyRecipient
+    } else {
+        MakeFilterMatch::Subject
+    };
+
+    // Suggest a mailbox name based on the match value
+    let suggestion = match match_on {
+        MakeFilterMatch::From => {
+            // Extract just the name part or the bare address
+            let s = from.trim();
+            if let Some(pos) = s.find('<') {
+                let name = s[..pos].trim().trim_matches('"');
+                if !name.is_empty() {
+                    name.to_string()
+                } else {
+                    s[pos + 1..].trim_end_matches('>').to_string()
+                }
+            } else {
+                s.to_string()
+            }
+        }
+        MakeFilterMatch::AnyRecipient => any_recipient.to_string(),
+        MakeFilterMatch::Subject => subject.to_string(),
+    };
+
+    (match_on, suggestion)
+}
+
+// ================================================================
 // Tests
 // ================================================================
 

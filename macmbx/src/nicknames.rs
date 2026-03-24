@@ -1195,19 +1195,15 @@ mod tests {
 
     // ── File I/O tests ──
 
-    fn make_nick_dir() -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("test_nicks_{}", std::process::id()));
-        let _ = fs::create_dir_all(&dir);
-        dir
-    }
-
-    fn cleanup_dir(dir: &Path) {
-        let _ = fs::remove_dir_all(dir);
+    fn make_nick_dir() -> (tempfile::TempDir, PathBuf) {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().to_path_buf();
+        (tmp, dir)
     }
 
     #[test]
     fn read_eudora_nick_file() {
-        let dir = make_nick_dir();
+        let (_tmp, dir) = make_nick_dir();
         let file = dir.join("Eudora Nicknames");
         fs::write(
             &file,
@@ -1246,12 +1242,12 @@ note \"John Doe\" <first:John><last:Doe><note:A note>
         assert_eq!(book.get_field(2, "last"), Some("Doe"));
         assert_eq!(book.get_field(2, "note"), Some("A note"));
 
-        cleanup_dir(&dir);
+
     }
 
     #[test]
     fn save_and_reload_book() {
-        let dir = make_nick_dir();
+        let (_tmp, dir) = make_nick_dir();
         let file = dir.join("test_book");
 
         {
@@ -1274,12 +1270,12 @@ note \"John Doe\" <first:John><last:Doe><note:A note>
             assert_eq!(book.find("John Doe"), Some(2));
         }
 
-        cleanup_dir(&dir);
+
     }
 
     #[test]
     fn save_skips_deleted() {
-        let dir = make_nick_dir();
+        let (_tmp, dir) = make_nick_dir();
         let file = dir.join("test_deleted");
 
         {
@@ -1297,14 +1293,14 @@ note \"John Doe\" <first:John><last:Doe><note:A note>
             assert_eq!(book.entries[0].name, "keep");
         }
 
-        cleanup_dir(&dir);
+
     }
 
     // ── AddressBooks tests ──
 
     #[test]
     fn open_address_books_dir() {
-        let dir = make_nick_dir();
+        let (_tmp, dir) = make_nick_dir();
         let file1 = dir.join("book1");
         let file2 = dir.join("book2");
         fs::write(&file1, "alias alice alice@a.com\n").unwrap();
@@ -1313,12 +1309,12 @@ note \"John Doe\" <first:John><last:Doe><note:A note>
         let abs = AddressBooks::open(&dir).unwrap();
         assert_eq!(abs.books.len(), 2);
 
-        cleanup_dir(&dir);
+
     }
 
     #[test]
     fn create_and_remove_book() {
-        let dir = make_nick_dir();
+        let (_tmp, dir) = make_nick_dir();
         let mut abs = AddressBooks::open(&dir).unwrap();
         assert_eq!(abs.books.len(), 0);
 
@@ -1329,12 +1325,12 @@ note \"John Doe\" <first:John><last:Doe><note:A note>
         abs.remove_book(0).unwrap();
         assert_eq!(abs.books.len(), 0);
 
-        cleanup_dir(&dir);
+
     }
 
     #[test]
     fn find_book_by_name() {
-        let dir = make_nick_dir();
+        let (_tmp, dir) = make_nick_dir();
         fs::write(dir.join("MyBook"), "alias alice alice@a.com\n").unwrap();
         let abs = AddressBooks::open(&dir).unwrap();
 
@@ -1342,12 +1338,12 @@ note \"John Doe\" <first:John><last:Doe><note:A note>
         assert!(abs.find_book("mybook").is_some()); // case insensitive
         assert!(abs.find_book("other").is_none());
 
-        cleanup_dir(&dir);
+
     }
 
     #[test]
     fn find_all_across_books() {
-        let dir = make_nick_dir();
+        let (_tmp, dir) = make_nick_dir();
         fs::write(dir.join("book1"), "alias alice alice@a.com\n").unwrap();
         fs::write(dir.join("book2"), "alias bob bob@b.com\n").unwrap();
 
@@ -1356,12 +1352,12 @@ note \"John Doe\" <first:John><last:Doe><note:A note>
         assert!(abs.find_all("bob").is_some());
         assert!(abs.find_all("charlie").is_none());
 
-        cleanup_dir(&dir);
+
     }
 
     #[test]
     fn contains_address_search() {
-        let dir = make_nick_dir();
+        let (_tmp, dir) = make_nick_dir();
         fs::write(dir.join("book"), "alias alice alice@example.com,alice2@example.com\n").unwrap();
         let abs = AddressBooks::open(&dir).unwrap();
 
@@ -1370,12 +1366,12 @@ note \"John Doe\" <first:John><last:Doe><note:A note>
         assert!(abs.contains_address("alice2@example.com"));
         assert!(!abs.contains_address("bob@example.com"));
 
-        cleanup_dir(&dir);
+
     }
 
     #[test]
     fn contains_hash_search() {
-        let dir = make_nick_dir();
+        let (_tmp, dir) = make_nick_dir();
         fs::write(dir.join("book"), "alias alice alice@example.com\n").unwrap();
         let abs = AddressBooks::open(&dir).unwrap();
 
@@ -1384,24 +1380,24 @@ note \"John Doe\" <first:John><last:Doe><note:A note>
         assert!(!abs.contains_hash(0));
         assert!(!abs.contains_hash(99999));
 
-        cleanup_dir(&dir);
+
     }
 
     #[test]
     fn expand_nickname() {
-        let dir = make_nick_dir();
+        let (_tmp, dir) = make_nick_dir();
         fs::write(dir.join("book"), "alias team alice@a.com,bob@b.com\n").unwrap();
         let abs = AddressBooks::open(&dir).unwrap();
 
         assert_eq!(abs.expand("team"), Some("alice@a.com,bob@b.com".to_string()));
         assert_eq!(abs.expand("nonexistent"), None);
 
-        cleanup_dir(&dir);
+
     }
 
     #[test]
     fn search_nicknames() {
-        let dir = make_nick_dir();
+        let (_tmp, dir) = make_nick_dir();
         fs::write(
             &dir.join("book"),
             "\
@@ -1433,14 +1429,14 @@ note alice <first:Alice><last:Smith>
         let results = abs.search("charlie");
         assert_eq!(results.len(), 0);
 
-        cleanup_dir(&dir);
+
     }
 
     // ── Autocomplete tests ──
 
     #[test]
     fn complete_by_name_prefix() {
-        let dir = make_nick_dir();
+        let (_tmp, dir) = make_nick_dir();
         fs::write(dir.join("book"), "alias alice alice@a.com\nalias bob bob@b.com\n").unwrap();
         let abs = AddressBooks::open(&dir).unwrap();
 
@@ -1451,7 +1447,7 @@ note alice <first:Alice><last:Smith>
 
     #[test]
     fn complete_by_first_last() {
-        let dir = make_nick_dir();
+        let (_tmp, dir) = make_nick_dir();
         fs::write(
             &dir.join("book"),
             "alias jd john@example.com\nnote jd <first:John><last:Doe>\n",
@@ -1468,7 +1464,7 @@ note alice <first:Alice><last:Smith>
 
     #[test]
     fn complete_by_address_prefix() {
-        let dir = make_nick_dir();
+        let (_tmp, dir) = make_nick_dir();
         fs::write(dir.join("book"), "alias alice alice@example.com\n").unwrap();
         let abs = AddressBooks::open(&dir).unwrap();
 
@@ -1478,7 +1474,7 @@ note alice <first:Alice><last:Smith>
 
     #[test]
     fn complete_priority_order() {
-        let dir = make_nick_dir();
+        let (_tmp, dir) = make_nick_dir();
         // "al" matches:
         //   alice -> name prefix (1)
         //   xyzal -> name contains (4)
@@ -1502,7 +1498,7 @@ alias zz al@c.com
 
     #[test]
     fn complete_max_results() {
-        let dir = make_nick_dir();
+        let (_tmp, dir) = make_nick_dir();
         let mut content = String::new();
         for i in 0..20 {
             content.push_str(&format!("alias test{} test{}@a.com\n", i, i));
@@ -1516,21 +1512,21 @@ alias zz al@c.com
 
     #[test]
     fn complete_empty_prefix_returns_nothing() {
-        let dir = make_nick_dir();
+        let (_tmp, dir) = make_nick_dir();
         fs::write(dir.join("book"), "alias alice alice@a.com\n").unwrap();
         let abs = AddressBooks::open(&dir).unwrap();
 
         let results = abs.complete("", 10);
         assert!(results.is_empty());
 
-        cleanup_dir(&dir);
+
     }
 
     // ── Import/Export tests ──
 
     #[test]
     fn import_eudora_file() {
-        let dir = make_nick_dir();
+        let (_tmp, dir) = make_nick_dir();
         let src = dir.join("source");
         let dest = dir.join("dest");
 
@@ -1548,12 +1544,12 @@ alias zz al@c.com
         assert_eq!(book.get_addresses(0), Some("imported@example.com"));
         assert_eq!(book.get_field(0, "first"), Some("Test"));
 
-        cleanup_dir(&dir);
+
     }
 
     #[test]
     fn export_eudora_file() {
-        let dir = make_nick_dir();
+        let (_tmp, dir) = make_nick_dir();
         let export_path = dir.join("exported");
 
         let mut book = AddressBook::new("test", dir.join("test"));
@@ -1568,12 +1564,12 @@ alias zz al@c.com
         assert!(content.contains("alias \"John Doe\" john@example.com"));
         assert!(content.contains("note alice <first:Alice>"));
 
-        cleanup_dir(&dir);
+
     }
 
     #[test]
     fn export_preserves_escaping() {
-        let dir = make_nick_dir();
+        let (_tmp, dir) = make_nick_dir();
         let export_path = dir.join("exported");
 
         let mut book = AddressBook::new("test", dir.join("test"));
@@ -1590,12 +1586,12 @@ alias zz al@c.com
         read_nick_file(&mut book2).unwrap();
         assert_eq!(book2.get_field(0, "note"), Some("has <angle> brackets"));
 
-        cleanup_dir(&dir);
+
     }
 
     #[test]
     fn skip_hidden_and_temp_files() {
-        let dir = make_nick_dir();
+        let (_tmp, dir) = make_nick_dir();
         fs::write(dir.join("good"), "alias a a@a.com\n").unwrap();
         fs::write(dir.join(".hidden"), "alias b b@b.com\n").unwrap();
         fs::write(dir.join("file.toc"), "binary data").unwrap();
@@ -1606,12 +1602,12 @@ alias zz al@c.com
         assert_eq!(abs.books.len(), 1);
         assert_eq!(abs.books[0].name, "good");
 
-        cleanup_dir(&dir);
+
     }
 
     #[test]
     fn save_all_dirty_books() {
-        let dir = make_nick_dir();
+        let (_tmp, dir) = make_nick_dir();
         let mut abs = AddressBooks::open(&dir).unwrap();
 
         let idx = abs.create_book("book1").unwrap();
@@ -1626,20 +1622,20 @@ alias zz al@c.com
         let abs2 = AddressBooks::open(&dir).unwrap();
         assert_eq!(abs2.books.len(), 2);
 
-        cleanup_dir(&dir);
+
     }
 
     #[test]
     fn remove_book_invalid_index() {
-        let dir = make_nick_dir();
+        let (_tmp, dir) = make_nick_dir();
         let mut abs = AddressBooks::open(&dir).unwrap();
         assert!(abs.remove_book(99).is_err());
-        cleanup_dir(&dir);
+
     }
 
     #[test]
     fn get_book_methods() {
-        let dir = make_nick_dir();
+        let (_tmp, dir) = make_nick_dir();
         fs::write(dir.join("book"), "alias alice alice@a.com\n").unwrap();
         let mut abs = AddressBooks::open(&dir).unwrap();
 
@@ -1648,7 +1644,7 @@ alias zz al@c.com
         assert!(abs.get_book_mut(0).is_some());
         assert!(abs.get_book_mut(99).is_none());
 
-        cleanup_dir(&dir);
+
     }
 
     #[test]

@@ -13,11 +13,12 @@ use std::fs;
 use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
 use crate::toc::{MsgFlags, MsgSum, State, Toc, MailboxType};
+use crate::stats::{Stats, NumStat, ShortStat};
 
 // ══════════════════════════════════════════════════════════════════
 // Types shared with the rest of macmbx (conf, store, filter, junk)
@@ -148,8 +149,19 @@ pub trait PostProcessor: Send + Sync {
     fn apply_junk(&self, toc: &mut Toc);
 }
 
+/// Proxy configuration for mail connections.
+#[derive(Debug, Clone)]
+pub struct ProxyConfig {
+    pub proxy_type: String, // "http" or "socks5"
+    pub host: String,
+    pub port: u16,
+    pub username: Option<String>,
+    pub password: Option<String>,
+}
+
 /// SMTP session abstraction (wraps `crispy::smtp`).
 pub trait SmtpClient: Send {
+    fn set_proxy(&mut self, _proxy: &ProxyConfig) {}
     fn connect(&mut self, server: &str, port: u16, security: SmtpSecurity) -> io::Result<()>;
     fn auth_plain(&mut self, user: &str, pass: &str) -> io::Result<()>;
     fn auth_login(&mut self, user: &str, pass: &str) -> io::Result<()>;
@@ -159,6 +171,7 @@ pub trait SmtpClient: Send {
 
 /// POP3 session abstraction (wraps `crispy::pop3`).
 pub trait Pop3Client: Send {
+    fn set_proxy(&mut self, _proxy: &ProxyConfig) {}
     fn connect(&mut self, server: &str, port: u16, security: Pop3Security) -> io::Result<()>;
     fn authenticate(&mut self, user: &str, pass: &str) -> io::Result<()>;
     fn stat(&mut self) -> io::Result<(u32, u64)>;
@@ -178,6 +191,7 @@ pub struct Pop3MsgInfo {
 
 /// IMAP session abstraction (wraps `crispy::imap`).
 pub trait ImapClient: Send {
+    fn set_proxy(&mut self, _proxy: &ProxyConfig) {}
     fn connect(&mut self, server: &str, port: u16, security: ImapSecurity) -> io::Result<()>;
     fn login(&mut self, user: &str, pass: &str) -> io::Result<()>;
     fn select(&mut self, mailbox: &str) -> io::Result<ImapMailboxInfo>;
@@ -236,6 +250,7 @@ pub struct Mailer {
     signature: Option<String>,
     lmos_dir: PathBuf,
     idle_slots: Vec<IdleSlot>,
+    stats: Option<Arc<Mutex<Stats>>>,
 }
 
 impl Mailer {
@@ -262,6 +277,7 @@ impl Mailer {
             signature: None,
             lmos_dir,
             idle_slots: Vec::new(),
+            stats: None,
         }
     }
 
@@ -285,6 +301,46 @@ impl Mailer {
 
     pub fn set_signature(&mut self, sig: &str) {
         self.signature = if sig.is_empty() { None } else { Some(sig.to_string()) };
+    }
+
+    pub fn set_stats(&mut self, stats: Arc<Mutex<Stats>>) {
+        self.stats = Some(stats);
+    }
+
+    fn stat_num(&self, which: NumStat, value: i64) {
+        if let Some(ref s) = self.stats {
+            if let Ok(mut s) = s.lock() { s.update_num(which, value); }
+        }
+    }
+
+    /// Read proxy config from conf, if configured.
+    fn get_proxy_config(&self) -> Option<ProxyConfig> {
+        let ptype = self.conf.get("proxy", "type").unwrap_or_default();
+        if ptype.is_empty() || ptype == "0" || ptype.eq_ignore_ascii_case("none") {
+            return None;
+        }
+        let host = self.conf.get("proxy", "host").unwrap_or_default();
+        if host.is_empty() { return None; }
+        let port = self.conf.get_int("proxy", "port", 8080) as u16;
+        let username = self.conf.get("proxy", "username").filter(|s| !s.is_empty());
+        let password = self.conf.get("proxy", "password").filter(|s| !s.is_empty());
+        let proxy_type = if ptype == "2" || ptype.eq_ignore_ascii_case("socks5") {
+            "socks5".to_string()
+        } else {
+            "http".to_string()
+        };
+        Some(ProxyConfig { proxy_type, host, port, username, password })
+    }
+
+    /// Apply proxy config to a client, if configured.
+    fn apply_proxy(&self, client: &mut dyn SmtpClient) {
+        if let Some(ref p) = self.get_proxy_config() { client.set_proxy(p); }
+    }
+
+    fn stat_short(&self, which: ShortStat, value: i64) {
+        if let Some(ref s) = self.stats {
+            if let Ok(mut s) = s.lock() { s.update_short(which, value); }
+        }
     }
 
     // ── Public accessors ──
@@ -353,7 +409,7 @@ impl Mailer {
         if ssl & 4 != 0 {
             (SmtpSecurity::Ssl, 465)
         } else if ssl & 2 != 0 || ssl & 1 != 0 {
-            (SmtpSecurity::StartTls, 25)
+            (SmtpSecurity::StartTls, 587)
         } else {
             (SmtpSecurity::Plain, 25)
         }
@@ -421,6 +477,7 @@ impl Mailer {
         }
 
         let mut smtp = self.factory.create_smtp();
+        if let Some(ref p) = self.get_proxy_config() { smtp.set_proxy(p); }
         match smtp.connect(server, port, security) {
             Ok(()) => {}
             Err(e) if e.to_string().contains("certificate accepted") => {
@@ -451,6 +508,7 @@ impl Mailer {
         let (security, port) = Self::pop3_security_from_ssl(pop_ssl);
 
         let mut pop = self.factory.create_pop3();
+        if let Some(ref p) = self.get_proxy_config() { pop.set_proxy(p); }
         match pop.connect(&acct.server, port, security) {
             Ok(()) => {}
             Err(e) => {
@@ -505,6 +563,7 @@ impl Mailer {
         let (security, port) = Self::imap_security_from_ssl(imap_ssl);
 
         let mut imap = self.factory.create_imap();
+        if let Some(ref p) = self.get_proxy_config() { imap.set_proxy(p); }
         match imap.connect(&acct.server, port, security) {
             Ok(()) => {}
             Err(e) if e.to_string().contains("certificate accepted") => {
@@ -731,6 +790,10 @@ impl Mailer {
                 out_toc.msgs[i].state = State::Sent;
                 out_toc.dirty = true;
                 sent += 1;
+                self.stat_num(NumStat::SentMail, 1);
+                if out_toc.msgs[i].flags.contains(MsgFlags::ATTACHMENT) {
+                    self.stat_short(ShortStat::SentAttach, 1);
+                }
             }
         }
 
@@ -935,6 +998,10 @@ impl Mailer {
                 inbox.msgs[idx].pop_pers_id = personality_hash(&acct.name);
             }
             downloaded += 1;
+            self.stat_num(NumStat::ReceivedMail, 1);
+            if inbox.msgs[idx].flags.contains(MsgFlags::ATTACHMENT) {
+                self.stat_short(ShortStat::ReceivedAttach, 1);
+            }
 
             // Mark LMOS
             if use_lmos && (i as usize) <= msg_list.len() && !msg_list[i as usize - 1].uidl.is_empty() {
@@ -1097,6 +1164,10 @@ impl Mailer {
                 inbox.msgs[idx].pers_id = personality_hash(&acct.name);
             }
             downloaded += 1;
+            self.stat_num(NumStat::ReceivedMail, 1);
+            if inbox.msgs[idx].flags.contains(MsgFlags::ATTACHMENT) {
+                self.stat_short(ShortStat::ReceivedAttach, 1);
+            }
         }
 
         // Step 10: Update flags on existing
@@ -1991,6 +2062,10 @@ mod tests {
 
     impl MockStore {
         fn new(base: &Path) -> Self {
+            // Use a subdirectory so that parent() stays inside the temp dir,
+            // preventing lmos_dir from colliding across parallel tests.
+            let base = base.join("mailboxes");
+            let _ = fs::create_dir_all(&base);
             let in_path = base.join("In");
             let out_path = base.join("Out");
             // Create mbox files
@@ -2316,7 +2391,7 @@ mod tests {
         assert_eq!(downloaded, 2);
 
         // Check inbox has messages
-        let in_path = tmp.path().join("In");
+        let in_path = tmp.path().join("mailboxes").join("In");
         let inbox = Toc::open_or_create(&in_path).unwrap();
         assert_eq!(inbox.msgs.len(), 2);
     }

@@ -5,6 +5,7 @@
 
 use crate::toc::{MsgFlags, MailboxType, MsgSum, Toc};
 use crate::store::Store;
+use crate::stats::{Stats, NumStat};
 use crate::ops;
 use std::io;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -86,6 +87,7 @@ pub fn score(
     index: usize,
     read_headers: impl Fn(&Toc, usize) -> Option<String>,
     read_body: impl Fn(&Toc, usize) -> Option<String>,
+    stats: Option<&mut Stats>,
 ) -> Option<i8> {
     if index >= toc.msgs.len() {
         return None;
@@ -97,6 +99,7 @@ pub fn score(
             toc.msgs[index].spam_score = 0;
             toc.msgs[index].spam_because = BECAUSE_WHITELIST;
             toc.dirty = true;
+            if let Some(s) = stats { s.update_num(NumStat::WhiteList, 1); }
             return Some(0);
         }
     }
@@ -119,6 +122,13 @@ pub fn score(
     toc.msgs[index].spam_score = clamped;
     toc.msgs[index].spam_because = BECAUSE_PLUG;
     toc.dirty = true;
+    if let Some(s) = stats {
+        if clamped >= cfg.threshold {
+            s.update_num(NumStat::ScoredJunk, 1);
+        } else {
+            s.update_num(NumStat::ScoredNotJunk, 1);
+        }
+    }
     Some(clamped)
 }
 
@@ -129,6 +139,7 @@ pub fn score_box(
     toc: &mut Toc,
     read_headers: impl Fn(&Toc, usize) -> Option<String>,
     read_body: impl Fn(&Toc, usize) -> Option<String>,
+    stats: Option<&mut Stats>,
 ) -> usize {
     let mut scored = 0;
     for i in 0..toc.msgs.len() {
@@ -138,9 +149,14 @@ pub fn score_box(
         if toc.msgs[i].spam_score != -1 {
             continue;
         }
-        if score(cfg, toc, i, &read_headers, &read_body).is_some() {
+        if score(cfg, toc, i, &read_headers, &read_body, None).is_some() {
             scored += 1;
         }
+    }
+    // Bulk scoring — stats passed to individual score() calls would
+    // cause borrow issues; caller can update stats with the count.
+    if let Some(s) = stats {
+        let _ = s; // reserved for future per-message tracking
     }
     scored
 }
@@ -158,11 +174,10 @@ pub fn rescore_box(
         if toc.msgs[i].flags.contains(MsgFlags::DELETED) {
             continue;
         }
-        // Skip user-marked messages that already have a score
         if toc.msgs[i].spam_score != -1 && toc.msgs[i].spam_because == BECAUSE_USER {
             continue;
         }
-        if score(cfg, toc, i, &read_headers, &read_body).is_some() {
+        if score(cfg, toc, i, &read_headers, &read_body, None).is_some() {
             scored += 1;
         }
     }
@@ -192,10 +207,14 @@ pub fn mark(
     is_junk: bool,
     read_headers: impl Fn(&Toc, usize) -> Option<String>,
     read_body: impl Fn(&Toc, usize) -> Option<String>,
+    stats: Option<&mut Stats>,
 ) -> bool {
     if index >= toc.msgs.len() {
         return false;
     }
+
+    let prev_score = toc.msgs[index].spam_score;
+    let prev_because = toc.msgs[index].spam_because;
 
     if is_junk {
         // Train scorer if available
@@ -224,6 +243,16 @@ pub fn mark(
         if !cfg.believe_date && toc.msgs[index].arrival != 0 {
             toc.msgs[index].seconds = toc.msgs[index].arrival;
         }
+
+        // Stats: false negative (was scored not-junk, user says junk)
+        if let Some(s) = stats {
+            if prev_score < cfg.threshold {
+                s.update_num(NumStat::FalseNegatives, 1);
+            }
+            if prev_because == BECAUSE_WHITELIST {
+                s.update_num(NumStat::FalseWhiteList, 1);
+            }
+        }
     } else {
         // Train as not-junk
         if let Some(ref score_fn) = cfg.score_fn {
@@ -240,6 +269,13 @@ pub fn mark(
 
         toc.msgs[index].spam_score = 0;
         toc.msgs[index].spam_because = BECAUSE_USER;
+
+        // Stats: false positive (was scored junk, user says not-junk)
+        if let Some(s) = stats {
+            if prev_score >= cfg.threshold {
+                s.update_num(NumStat::FalsePositives, 1);
+            }
+        }
     }
 
     toc.dirty = true;
@@ -437,7 +473,7 @@ mod tests {
     fn score_no_scorer_returns_none() {
         let cfg = JunkConfig::new();
         let mut toc = make_toc_with_msgs(1);
-        let result = score(&cfg, &mut toc, 0, no_headers, no_body);
+        let result = score(&cfg, &mut toc, 0, no_headers, no_body, None);
         assert!(result.is_none());
     }
 
@@ -447,7 +483,7 @@ mod tests {
         cfg.set_whitelist(Box::new(|from: &str| from.contains("sender0")));
 
         let mut toc = make_toc_with_msgs(2);
-        let result = score(&cfg, &mut toc, 0, no_headers, no_body);
+        let result = score(&cfg, &mut toc, 0, no_headers, no_body, None);
         assert_eq!(result, Some(0));
         assert_eq!(toc.msgs[0].spam_score, 0);
         assert_eq!(toc.msgs[0].spam_because, BECAUSE_WHITELIST);
@@ -463,7 +499,7 @@ mod tests {
         ));
 
         let mut toc = make_toc_with_msgs(1);
-        let result = score(&cfg, &mut toc, 0, no_headers, no_body);
+        let result = score(&cfg, &mut toc, 0, no_headers, no_body, None);
         assert_eq!(result, Some(75));
         assert_eq!(toc.msgs[0].spam_score, 75);
         assert_eq!(toc.msgs[0].spam_because, BECAUSE_PLUG);
@@ -480,7 +516,7 @@ mod tests {
         ));
 
         let mut toc = make_toc_with_msgs(1);
-        let result = score(&cfg, &mut toc, 0, no_headers, no_body);
+        let result = score(&cfg, &mut toc, 0, no_headers, no_body, None);
         assert_eq!(result, Some(100));
     }
 
@@ -488,7 +524,7 @@ mod tests {
     fn score_invalid_index() {
         let cfg = JunkConfig::new();
         let mut toc = make_toc_with_msgs(1);
-        assert!(score(&cfg, &mut toc, 5, no_headers, no_body).is_none());
+        assert!(score(&cfg, &mut toc, 5, no_headers, no_body, None).is_none());
     }
 
     #[test]
@@ -506,7 +542,7 @@ mod tests {
         // Mark one already scored
         toc.msgs[2].spam_score = 30;
 
-        let count = score_box(&cfg, &mut toc, no_headers, no_body);
+        let count = score_box(&cfg, &mut toc, no_headers, no_body, None);
         assert_eq!(count, 2); // msg 0 and msg 3 scored
         assert_eq!(toc.msgs[0].spam_score, 60);
         assert_eq!(toc.msgs[1].spam_score, -1); // deleted, untouched
@@ -568,7 +604,7 @@ mod tests {
         toc.msgs[0].arrival = 1700000000;
         toc.msgs[0].seconds = 1700050000;
 
-        assert!(mark(&cfg, &mut toc, 0, true, no_headers, no_body));
+        assert!(mark(&cfg, &mut toc, 0, true, no_headers, no_body, None));
         assert_eq!(toc.msgs[0].spam_score, 100); // was -1, so set to 100
         assert_eq!(toc.msgs[0].spam_because, BECAUSE_USER);
         // With believe_date=false, seconds should be set to arrival
@@ -581,7 +617,7 @@ mod tests {
         let mut toc = make_toc_with_msgs(1);
         toc.msgs[0].spam_score = 90;
 
-        assert!(mark(&cfg, &mut toc, 0, false, no_headers, no_body));
+        assert!(mark(&cfg, &mut toc, 0, false, no_headers, no_body, None));
         assert_eq!(toc.msgs[0].spam_score, 0);
         assert_eq!(toc.msgs[0].spam_because, BECAUSE_USER);
     }
@@ -592,7 +628,7 @@ mod tests {
         let mut toc = make_toc_with_msgs(1);
         toc.msgs[0].spam_score = 85;
 
-        assert!(mark(&cfg, &mut toc, 0, true, no_headers, no_body));
+        assert!(mark(&cfg, &mut toc, 0, true, no_headers, no_body, None));
         assert_eq!(toc.msgs[0].spam_score, 85); // preserved existing high score
     }
 
@@ -747,7 +783,7 @@ mod tests {
         ));
 
         let mut toc = make_toc_with_msgs(1);
-        let result = score(&cfg, &mut toc, 0, no_headers, no_body);
+        let result = score(&cfg, &mut toc, 0, no_headers, no_body, None);
         assert_eq!(result, Some(0)); // whitelist wins
         assert_eq!(toc.msgs[0].spam_because, BECAUSE_WHITELIST);
     }
@@ -756,7 +792,7 @@ mod tests {
     fn mark_invalid_index() {
         let cfg = JunkConfig::new();
         let mut toc = make_toc_with_msgs(1);
-        assert!(!mark(&cfg, &mut toc, 5, true, no_headers, no_body));
+        assert!(!mark(&cfg, &mut toc, 5, true, no_headers, no_body, None));
     }
 
     #[test]
