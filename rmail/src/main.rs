@@ -906,6 +906,9 @@ fn build_ui(app: &gtk4::Application) {
                         server:      updated.get_bool("mailbox_display", "show_col_server", false),
                         mood:        updated.get_bool("mailbox_display", "show_col_mood", false),
                         junk:        updated.get_bool("mailbox_display", "show_col_junk", false),
+                        draw_horiz_lines: updated.get_bool("mailbox_display", "draw_horiz_lines", true),
+                        draw_vert_lines:  updated.get_bool("mailbox_display", "draw_vert_lines", false),
+                        mark_read_delay_secs: updated.get_int("mailbox_display", "mark_read_delay", 0) as u32,
                     };
                     MAIL_LIST_REGISTRY.with(|reg| {
                         reg.borrow().iter().for_each(|ml| ml.set_column_config(col_config.clone()));
@@ -1528,11 +1531,94 @@ fn build_ui(app: &gtk4::Application) {
                                 toc.msgs[idx as usize].spam_score = 0;
                             }
                             let _ = toc.save();
+                            
+                            // Update UI: find the MailListWidget for this mbox and update it
+                            MAIL_LIST_REGISTRY.with(|reg| {
+                                for ml in reg.borrow().iter() {
+                                    if ml.mbox_path() == mbox_path {
+                                        ml.set_row_unread(idx, state_val == macmbx::toc::State::Unread);
+                                    }
+                                }
+                            });
+                            // Sidebar refresh is usually handled by the callback in build_mailbox_tab,
+                            // but for global actions we might need to trigger it if we had a global sidebar ref.
                         }
                     }
                 }
             });
             app.add_action(&action);
+        }
+
+        // ── Set Priority (parameter: i32 1-5) ──
+        {
+            let prio_action = gio::SimpleAction::new("set-priority", Some(&i32::static_variant_type()));
+            let nb = content_notebook.clone();
+            prio_action.connect_activate(move |_, param| {
+                if let (Some(p), Some((mbox_path, idx))) = (param.and_then(|v| v.get::<i32>()), get_selected_msg(&nb)) {
+                    if let Ok(mut toc) = macmbx::toc::Toc::open(&mbox_path) {
+                        if (idx as usize) < toc.msgs.len() {
+                            toc.msgs[idx as usize].priority = p as u8;
+                            let _ = toc.save();
+                            // Update UI
+                            MAIL_LIST_REGISTRY.with(|reg| {
+                                for ml in reg.borrow().iter() {
+                                    if ml.mbox_path() == mbox_path {
+                                        ml.set_row_priority(idx, p as i8);
+                                    }
+                                }
+                            });
+                        }
+                    }
+                }
+            });
+            app.add_action(&prio_action);
+        }
+
+        // ── Set Label (parameter: i32 0-7) ──
+        {
+            let label_action = gio::SimpleAction::new("set-label", Some(&i32::static_variant_type()));
+            let nb = content_notebook.clone();
+            let st = state.clone();
+            label_action.connect_activate(move |_, param| {
+                if let (Some(lab), Some((mbox_path, idx))) = (param.and_then(|v| v.get::<i32>()), get_selected_msg(&nb)) {
+                    if let Ok(mut toc) = macmbx::toc::Toc::open(&mbox_path) {
+                        if (idx as usize) < toc.msgs.len() {
+                            toc.msgs[idx as usize].flags = toc.msgs[idx as usize].flags.with_label(lab as u8);
+                            let _ = toc.save();
+                            
+                            // Get hex color for UI update
+                            let s = st.borrow();
+                            let conf_rc = s.conf.clone();
+                            let color_hex = if lab == 0 { String::new() } else {
+                                let key = format!("color_{}", lab - 1);
+                                let mut res = String::new();
+                                if let Some(val) = conf_rc.borrow().get("labels", &key) {
+                                    let parts: Vec<f64> = val.split(',').filter_map(|s| s.trim().parse().ok()).collect();
+                                    if parts.len() >= 3 {
+                                        res = format!("#{:02X}{:02X}{:02X}",
+                                            (parts[0] * 255.0) as u8, (parts[1] * 255.0) as u8, (parts[2] * 255.0) as u8);
+                                    }
+                                }
+                                if res.is_empty() {
+                                    let defaults = ["", "#FF0000", "#0000FF", "#009900", "#990099", "#FF8000", "#009999", "#666666"];
+                                    res = defaults[lab as usize].to_string();
+                                }
+                                res
+                            };
+
+                            // Update UI
+                            MAIL_LIST_REGISTRY.with(|reg| {
+                                for ml in reg.borrow().iter() {
+                                    if ml.mbox_path() == mbox_path {
+                                        ml.set_row_label_color(idx, color_hex.clone());
+                                    }
+                                }
+                            });
+                        }
+                    }
+                }
+            });
+            app.add_action(&label_action);
         }
 
     // ── Status bar ──
@@ -1837,6 +1923,7 @@ fn build_ui(app: &gtk4::Application) {
     let open_mailbox_tab = {
         let nb = content_notebook.clone();
         let st = state.clone();
+        let sb = sidebar.clone();
         Rc::new(move |mbox_path: &str, name: &str| {
             if mbox_path.is_empty() { return; }
 
@@ -1860,7 +1947,7 @@ fn build_ui(app: &gtk4::Application) {
             match macmbx::toc::Toc::open(&mbox) {
                 Ok(toc) => {
                     let s = st.borrow();
-                    let content = build_mailbox_tab(&toc, mbox_path, &nb, s.conf.clone(), s.mailer.clone(), s.books.clone());
+                    let content = build_mailbox_tab(&toc, mbox_path, &nb, s.conf.clone(), s.mailer.clone(), s.books.clone(), sb.clone(), st.clone());
 
                     let tab_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 4);
                     tab_box.append(&gtk4::Label::new(Some(name)));
@@ -2671,6 +2758,8 @@ fn build_mailbox_tab(
     conf: Rc<RefCell<macmbx::conf::Conf>>,
     mailer: std::sync::Arc<macmbx::mailer::Mailer>,
     books: Option<Rc<macmbx::nicknames::AddressBooks>>,
+    sidebar: Rc<sidebar::SidebarWidget>,
+    app_state: Rc<RefCell<AppState>>,
 ) -> gtk4::Widget {
     let vpaned = gtk4::Paned::new(gtk4::Orientation::Vertical);
     vpaned.set_position(300);
@@ -2732,12 +2821,41 @@ fn build_mailbox_tab(
         server: c.get_bool("mailbox_display", "show_col_server", false),
         mood: c.get_bool("mailbox_display", "show_col_mood", false),
         junk: c.get_bool("mailbox_display", "show_col_junk", false),
+        draw_horiz_lines: c.get_bool("mailbox_display", "draw_horiz_lines", true),
+        draw_vert_lines: c.get_bool("mailbox_display", "draw_vert_lines", false),
+        mark_read_delay_secs: c.get_int("mailbox_display", "mark_read_delay", 0) as u32,
     };
     mail_list.set_column_config(col_config);
 
     // Register so pref_action can push ColumnConfig updates in real-time
     let ml_rc = mail_list.clone();
     MAIL_LIST_REGISTRY.with(|reg| reg.borrow_mut().push(ml_rc));
+
+    {
+        let mbox_owned = mbox_path.to_string();
+        let ml = mail_list.clone();
+        let sb = sidebar.clone();
+        let st = app_state.clone();
+        
+        *mail_list.on_mark_read.borrow_mut() = Some(Box::new(move |_: &str, toc_idx: i32| {
+            if let Ok(mut toc) = macmbx::toc::Toc::open(&mbox_owned) {
+                let idx = toc_idx as usize;
+                if idx < toc.msgs.len() && toc.msgs[idx].state == macmbx::toc::State::Unread {
+                    toc.msgs[idx].state = macmbx::toc::State::Read;
+                    if let Err(e) = toc.save() {
+                        eprintln!("MarkRead: Failed to save TOC for {}: {}", mbox_owned, e);
+                    } else {
+                        // Flip in-memory row so the unread dot disappears immediately
+                        ml.mark_row_read(toc_idx);
+                        
+                        // Refresh sidebar to update unread count
+                        let mut s = st.borrow_mut();
+                        sb.refresh(&mut s.store);
+                    }
+                }
+            }
+        }));
+    }
 
     mail_list.set_theme(mail_list_theme_from_palette(
         CURRENT_THEME.load(std::sync::atomic::Ordering::Relaxed)));
@@ -2794,6 +2912,7 @@ fn build_mailbox_tab(
     // Uses the widget's on_right_click callback to show a native PopoverMenu.
     {
         let widget_for_ctx = mail_list.widget.clone();
+        let conf_for_menu = conf.clone();
         *mail_list.on_right_click.borrow_mut() = Some(Box::new(move |x, y| {
             let menu = gio::Menu::new();
             menu.append(Some("Reply"), Some("app.reply"));
@@ -2818,6 +2937,31 @@ fn build_mailbox_tab(
                 s.append(Some("Mark Not Junk"), Some("app.mark-not-junk"));
                 s
             });
+
+            let priority = gio::Menu::new();
+            for (p, label) in &[(1, "Highest"), (2, "High"), (3, "Normal"), (4, "Low"), (5, "Lowest")] {
+                let item = gio::MenuItem::new(Some(label), Some("app.set-priority"));
+                item.set_action_and_target_value(Some("app.set-priority"), Some(&(*p as i32).to_variant()));
+                priority.append_item(&item);
+            }
+            menu.append_submenu(Some("Priority"), &priority);
+
+            let label_menu = gio::Menu::new();
+            let none_item = gio::MenuItem::new(Some("⚪ None"), Some("app.set-label"));
+            none_item.set_action_and_target_value(Some("app.set-label"), Some(&0.to_variant()));
+            label_menu.append_item(&none_item);
+
+            let emojis = ["🔴", "🔵", "🟢", "🟣", "🟠", "🟡", "🟤"];
+            for (i, emoji) in emojis.iter().enumerate() {
+                let key = format!("label_{}", i);
+                let name = conf_for_menu.borrow().get("labels", &key).map(|s| s.to_string()).unwrap_or_else(|| format!("Label {}", i + 1));
+                let label_text = format!("{} {}", emoji, name);
+                let item = gio::MenuItem::new(Some(&label_text), Some("app.set-label"));
+                item.set_action_and_target_value(Some("app.set-label"), Some(&((i + 1) as i32).to_variant()));
+                label_menu.append_item(&item);
+            }
+            menu.append_submenu(Some("Label"), &label_menu);
+
             menu.append_section(None, &{
                 let s = gio::Menu::new();
                 s.append(Some("Make Filter..."), Some("app.make-filter"));
@@ -3029,6 +3173,15 @@ button.suggested-action {{
 button.suggested-action:hover {{ background: {accent2}; }}
 button.destructive-action {{
   background: {danger}; color: {hero_text}; border-color: {danger}; }}
+
+.drag-badge {{
+  background: {accent};
+  color: #ffffff;
+  padding: 6px 12px;
+  border-radius: 12px;
+  font-weight: 600;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+}}
 
 /* ── Entries, text views, spinbuttons ── */
 entry {{ background: {input_bg}; color: {input_text}; border: 1px solid {input_border};

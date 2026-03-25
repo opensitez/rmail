@@ -24,6 +24,8 @@ pub mod richtext;
 pub mod auth;
 pub mod msg;
 pub mod transport;
+pub mod http;
+pub mod caldav;
 pub mod smtp;
 pub mod pop3;
 pub mod imap;

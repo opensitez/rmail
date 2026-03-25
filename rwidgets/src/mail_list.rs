@@ -224,12 +224,14 @@ fn hit_resize_border(x: f64, cl: &ColLayout) -> Option<usize> {
 
 pub struct MailListWidget {
     pub widget: gtk4::Box,  // vertical: header + scrolled area
-    state: Rc<RefCell<State>>,
-    area: gtk4::DrawingArea,
+    pub state: Rc<RefCell<State>>,
+    pub area: gtk4::DrawingArea,
     pub on_selection_changed: Rc<RefCell<Option<Box<dyn Fn(&str, &[i32])>>>>,
     pub on_activate: Rc<RefCell<Option<Box<dyn Fn(&str, i32)>>>>,
     /// Called on right-click with (x, y) coordinates relative to the widget.
     pub on_right_click: Rc<RefCell<Option<Box<dyn Fn(i32, i32)>>>>,
+    /// Called with (mbox_path, msg_index) when the message should be marked read.
+    pub on_mark_read: Rc<RefCell<Option<Box<dyn Fn(&str, i32)>>>>,
 }
 
 impl MailListWidget {
@@ -275,6 +277,58 @@ impl MailListWidget {
             parent.queue_draw();
         }
     }
+
+    /// Flip the in-memory unread flag for the given TOC index and redraw the list.
+    /// Call this from the on_mark_read callback after updating the TOC file.
+    pub fn mark_row_read(&self, toc_idx: i32) {
+        eprintln!("MailList: mark_row_read called for toc_idx={}", toc_idx);
+        let mut s = self.state.borrow_mut();
+        if let Some(row) = s.rows.iter_mut().find(|r| r.index == toc_idx) {
+            row.unread = false;
+        }
+        drop(s);
+        self.area.queue_draw();
+    }
+
+    pub fn remove_row(&self, toc_idx: i32) {
+        let mut s = self.state.borrow_mut();
+        s.rows.retain(|r| r.index != toc_idx);
+        // Clear selection if it contained the removed row
+        // (Actually, better to re-validate selection index map if we had one, but here we just use row indices)
+        // Since we removed a row, all subsequent row indices in s.selected are now wrong!
+        // We MUST clear selection or update it.
+        s.selected.clear(); 
+        s.anchor = None;
+        drop(s);
+        self.area.queue_draw();
+    }
+
+    pub fn set_row_unread(&self, toc_idx: i32, unread: bool) {
+        let mut s = self.state.borrow_mut();
+        if let Some(row) = s.rows.iter_mut().find(|r| r.index == toc_idx) {
+            row.unread = unread;
+        }
+        drop(s);
+        self.area.queue_draw();
+    }
+
+    pub fn set_row_priority(&self, toc_idx: i32, priority: i8) {
+        let mut s = self.state.borrow_mut();
+        if let Some(row) = s.rows.iter_mut().find(|r| r.index == toc_idx) {
+            row.priority = priority;
+        }
+        drop(s);
+        self.area.queue_draw();
+    }
+
+    pub fn set_row_label_color(&self, toc_idx: i32, color_hex: String) {
+        let mut s = self.state.borrow_mut();
+        if let Some(row) = s.rows.iter_mut().find(|r| r.index == toc_idx) {
+            row.label_color = color_hex;
+        }
+        drop(s);
+        self.area.queue_draw();
+    }
 }
 
 pub fn build_mail_list(mbox_path: &str, rows: Vec<MsgRow>) -> MailListWidget {
@@ -302,6 +356,8 @@ pub fn build_mail_list(mbox_path: &str, rows: Vec<MsgRow>) -> MailListWidget {
     let on_activate: Rc<RefCell<Option<Box<dyn Fn(&str, i32)>>>> =
         Rc::new(RefCell::new(None));
     let on_right_click: Rc<RefCell<Option<Box<dyn Fn(i32, i32)>>>> =
+        Rc::new(RefCell::new(None));
+    let on_mark_read: Rc<RefCell<Option<Box<dyn Fn(&str, i32)>>>> =
         Rc::new(RefCell::new(None));
 
     // ── Header bar (drawn with cairo for consistency) ──
@@ -372,11 +428,8 @@ pub fn build_mail_list(mbox_path: &str, rows: Vec<MsgRow>) -> MailListWidget {
                 s.resize_start_x = x;
                 s.resize_start_w = match border {
                     0 => s.from_w,
-                    1 => {
-                        let subj_w = (ha.width() as f64 - cl.from_x - s.from_w - s.date_w - s.size_w).max(60.0);
-                        subj_w
-                    }
-                    2 => s.date_w,
+                    1 => s.date_w, // border 1 moves the left edge of Date -> modify date_w
+                    2 => s.date_w, // border 2 moves the right edge of Date -> modify date_w
                     _ => 0.0,
                 };
             } else {
@@ -389,16 +442,20 @@ pub fn build_mail_list(mbox_path: &str, rows: Vec<MsgRow>) -> MailListWidget {
         drag.connect_drag_update(move |_g, dx, _dy| {
             let mut s = st2.borrow_mut();
             if let Some(border) = s.resize_col {
-                let new_w = (s.resize_start_w + dx).max(40.0);
                 match border {
-                    0 => s.from_w = new_w,      // resize From column
-                    1 => {
-                        // resize Subject: adjust from_w inversely
-                        // Actually we adjust date_w start by moving the border
-                        // Simpler: resize From by dx, Subject shrinks automatically
-                        s.from_w = (s.resize_start_w + dx).max(40.0); // treat as From resize
+                    0 => {
+                        // resize From column: Right edge move
+                        s.from_w = (s.resize_start_w + dx).max(40.0);
                     }
-                    2 => s.date_w = new_w,       // resize Date column
+                    1 => {
+                        // border between Subject and Date: Left edge of Date move
+                        // growth in Subject (flexible) = shrink in Date
+                        s.date_w = (s.resize_start_w - dx).max(40.0);
+                    }
+                    2 => {
+                        // border between Date and Size: Right edge of Date move
+                        s.date_w = (s.resize_start_w + dx).max(40.0);
+                    }
                     _ => {}
                 }
                 ha2.queue_draw();
@@ -464,18 +521,26 @@ pub fn build_mail_list(mbox_path: &str, rows: Vec<MsgRow>) -> MailListWidget {
         let ha = header_area.clone();
         let osc = on_selection_changed.clone();
         let oa = on_activate.clone();
+        let on_mark_read_dbl = on_mark_read.clone();
+        let on_mark_read_timer = on_mark_read.clone();
+        let st_timer_ref = state.clone();
         let click = gtk4::GestureClick::new();
         click.set_button(1);
         click.connect_released(move |g, n_press, _x, y| {
             let row_idx = (y / ROW_HEIGHT) as usize;
 
-            // Double-click → activate
+            // Double-click → activate + immediately mark read
             if n_press == 2 {
                 let s = st.borrow();
                 if row_idx >= s.rows.len() { return; }
                 let mbox = s.mbox_path.clone();
                 let idx = s.rows[row_idx].index;
                 drop(s);
+                // Mark the message as read immediately on open
+                if let Some(ref cb) = *on_mark_read_dbl.borrow() {
+                    eprintln!("MailList: Double-click row {} (toc_idx {}) -> triggering on_mark_read", row_idx, idx);
+                    cb(&mbox, idx);
+                }
                 if let Some(ref cb) = *oa.borrow() { cb(&mbox, idx); }
                 return;
             }
@@ -511,12 +576,35 @@ pub fn build_mail_list(mbox_path: &str, rows: Vec<MsgRow>) -> MailListWidget {
             }
 
             let mbox = s.mbox_path.clone();
+            let delay_secs = s.col_config.mark_read_delay_secs;
             let indices: Vec<i32> = s.selected.iter()
                 .filter_map(|&i| s.rows.get(i).map(|r| r.index)).collect();
+            let selected_row = row_idx; // capture for timer check
             drop(s);
             a.queue_draw();
             ha.queue_draw();
             if let Some(ref cb) = *osc.borrow() { cb(&mbox, &indices); }
+
+            // Timed or immediate mark-as-read for single selection
+            if indices.len() == 1 {
+                let toc_idx = indices[0];
+                if delay_secs > 0 {
+                    let omr = on_mark_read_timer.clone();
+                    let st_timer = st_timer_ref.clone();
+                    let mbox_timer = mbox.clone();
+                    glib::timeout_add_seconds_local(delay_secs, move || {
+                        let s = st_timer.borrow();
+                        let still_selected = s.selected.len() == 1 && s.selected.contains(&selected_row);
+                        drop(s);
+                        if still_selected {
+                            if let Some(ref cb) = *omr.borrow() { cb(&mbox_timer, toc_idx); }
+                        }
+                        glib::ControlFlow::Break
+                    });
+                } else {
+                    if let Some(ref cb) = *on_mark_read_timer.borrow() { cb(&mbox, toc_idx); }
+                }
+            }
         });
         area.add_controller(click);
     }
@@ -526,6 +614,8 @@ pub fn build_mail_list(mbox_path: &str, rows: Vec<MsgRow>) -> MailListWidget {
         let st = state.clone();
         let a = area.clone();
         let osc = on_selection_changed.clone();
+        let on_mark_read_keys = on_mark_read.clone(); // For keyboard timer
+        let st_key_ref = state.clone(); // For keyboard timer
         let key = gtk4::EventControllerKey::new();
         key.connect_key_pressed(move |_, kv, _, _| {
             let mut s = st.borrow_mut();
@@ -540,12 +630,37 @@ pub fn build_mail_list(mbox_path: &str, rows: Vec<MsgRow>) -> MailListWidget {
                 _ => return glib::Propagation::Proceed,
             };
             s.selected.clear(); s.selected.insert(new); s.anchor = Some(new);
+            
             let mbox = s.mbox_path.clone();
+            let delay_secs = s.col_config.mark_read_delay_secs;
             let indices: Vec<i32> = s.selected.iter()
                 .filter_map(|&i| s.rows.get(i).map(|r| r.index)).collect();
+            let selected_row = new;
             drop(s);
             a.queue_draw();
             if let Some(ref cb) = *osc.borrow() { cb(&mbox, &indices); }
+
+            // Timed or immediate mark-as-read for single selection
+            if indices.len() == 1 {
+                let toc_idx = indices[0];
+                if delay_secs > 0 {
+                    let omr = on_mark_read_keys.clone();
+                    let st_timer = st_key_ref.clone();
+                    let mbox_timer = mbox.clone();
+                    glib::timeout_add_seconds_local(delay_secs as u32, move || {
+                        let s = st_timer.borrow();
+                        let still_selected = s.selected.len() == 1 && s.selected.contains(&selected_row);
+                        drop(s);
+                        if still_selected {
+                            if let Some(ref cb) = *omr.borrow() { cb(&mbox_timer, toc_idx); }
+                        }
+                        glib::ControlFlow::Break
+                    });
+                } else {
+                    if let Some(ref cb) = *on_mark_read_keys.borrow() { cb(&mbox, toc_idx); }
+                }
+            }
+
             glib::Propagation::Stop
         });
         area.add_controller(key);
@@ -598,7 +713,7 @@ pub fn build_mail_list(mbox_path: &str, rows: Vec<MsgRow>) -> MailListWidget {
                     label.set_margin_bottom(6);
                     label.set_margin_start(10);
                     label.set_margin_end(10);
-                    label.add_css_class("suggested-action");
+                    label.add_css_class("drag-badge");
                     
                     popover.set_child(Some(&label));
                     popover.set_parent(&a1);
@@ -665,18 +780,31 @@ pub fn build_mail_list(mbox_path: &str, rows: Vec<MsgRow>) -> MailListWidget {
         let st = state.clone();
         let a = area.clone();
         let orc = on_right_click.clone();
+        let osc = on_selection_changed.clone();
         let rclick = gtk4::GestureClick::new();
         rclick.set_button(3);
         rclick.connect_released(move |_, _, x, y| {
             let row_idx = (y / ROW_HEIGHT) as usize;
             let mut s = st.borrow_mut();
             if row_idx < s.rows.len() {
+                // If the right-clicked row is NOT selected, select it (and only it)
+                // If it IS already part of a selection, leave the selection as is.
                 if !s.selected.contains(&row_idx) {
-                    s.selected.clear(); s.selected.insert(row_idx); s.anchor = Some(row_idx);
+                    s.selected.clear();
+                    s.selected.insert(row_idx);
+                    s.anchor = Some(row_idx);
                 }
+                
+                let mbox = s.mbox_path.clone();
+                let indices: Vec<i32> = s.selected.iter()
+                    .filter_map(|&i| s.rows.get(i).map(|r| r.index)).collect();
                 drop(s);
                 a.queue_draw();
-                // Fire right-click callback
+                
+                // Fire selection changed callback FIRST so globals are updated
+                if let Some(ref cb) = *osc.borrow() { cb(&mbox, &indices); }
+                
+                // Fire right-click callback to show menu
                 if let Some(ref cb) = *orc.borrow() { cb(x as i32, y as i32); }
             }
         });
@@ -887,15 +1015,21 @@ fn draw_rows(cr: &cairo::Context, width: f64, state: &State) {
 
         // Date
         layout.set_text(&row.date);
+        layout.set_width((cl.date_w as i32 - 12) * pango::SCALE);
+        layout.set_ellipsize(pango::EllipsizeMode::End);
         cr.set_source_rgb(t.text_secondary.0, t.text_secondary.1, t.text_secondary.2);
         cr.move_to(cl.date_x + 6.0, text_y);
         pangocairo::functions::show_layout(cr, &layout);
+        layout.set_width(-1); layout.set_ellipsize(pango::EllipsizeMode::None);
 
         // Size (right-aligned)
         layout.set_text(&row.size);
+        layout.set_width((cl.size_w as i32 - 12) * pango::SCALE);
+        layout.set_ellipsize(pango::EllipsizeMode::End);
         let (sw, _) = layout.pixel_size();
-        cr.move_to(cl.size_x + COL_SIZE_W - sw as f64 - 8.0, text_y);
+        cr.move_to(cl.size_x + cl.size_w - sw as f64 - 8.0, text_y);
         pangocairo::functions::show_layout(cr, &layout);
+        layout.set_width(-1); layout.set_ellipsize(pango::EllipsizeMode::None);
 
         // Horizontal row separator
         if state.col_config.draw_horiz_lines {

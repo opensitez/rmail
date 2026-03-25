@@ -12,6 +12,8 @@ crate-type = ["lib", "staticlib"]
 [dependencies]
 crispy = { path = "../crispy" }
 regex = "1"
+rusqlite = { version = "0.31.0", features = ["bundled"] }
+uuid = { version = "1.8.0", features = ["v4"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
