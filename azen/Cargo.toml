@@ -1,0 +1,12 @@
+[package]
+name = "azen"
+version = "0.1.0"
+edition = "2024"
+description = "Azen email client powered by webcore"
+
+[[bin]]
+name = "azen"
+path = "src/azen.rs"
+
+[dependencies]
+webcore = "0.5"
