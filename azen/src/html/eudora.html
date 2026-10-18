@@ -1,0 +1,1133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Azen — Eudora Skin</title>
+<style>
+  /* ===== Reset & Base ===== */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-size: 10.5pt;
+    line-height: 1.6;
+    background: #f5f3f0;
+    color: #231e19;
+  }
+
+  /* ===== Layout ===== */
+  #app {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    background: #f5f3f0;
+  }
+
+  /* ===== Toolbar ===== */
+  #toolbar {
+    display: flex;
+    align-items: center;
+    background: #f5f3f0;
+    padding: 2px 4px;
+    gap: 2px;
+    border-bottom: 1px solid #d2cfc8;
+    flex-shrink: 0;
+  }
+  .tbtn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 10px;
+    height: 36px;
+    border: none;
+    background: transparent;
+    color: #231e19;
+    font-size: 10pt;
+    cursor: pointer;
+    border-radius: 6px;
+    white-space: nowrap;
+    font-family: inherit;
+  }
+  .tbtn:hover { background: #e6e3de; }
+  .tbtn:active { background: #d9d6d0; }
+  .tbtn.accent {
+    background: #326ea5;
+    color: white;
+  }
+  .tbtn.accent:hover { background: #285f94; }
+  .tbtn.accent:active { background: #1e5082; }
+  .tbtn.sep { margin-right: 6px; border-right: 1px solid rgba(35,30,25,0.12); }
+  #tb-spacer { flex: 1; }
+
+  /* ===== Content area ===== */
+  #content {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+  }
+
+  /* ===== Wazoo sidebar ===== */
+  #wazoo {
+    width: 210px;
+    flex-shrink: 0;
+    background: #f8f7f4;
+    display: flex;
+    flex-direction: column;
+    border-right: 1px solid #d2cfc8;
+    overflow: hidden;
+  }
+  #wazoo-tree {
+    flex: 1;
+    overflow-y: auto;
+    padding: 4px 0;
+  }
+  .wazoo-item {
+    display: flex;
+    align-items: center;
+    padding: 0 12px;
+    height: 26px;
+    cursor: pointer;
+    gap: 6px;
+    font-size: 10pt;
+    color: #231e19;
+    border-radius: 5px;
+    margin: 1px 4px;
+  }
+  .wazoo-item:hover { background: #eeecea; }
+  .wazoo-item.selected { background: #326ea5; color: white; }
+  .wazoo-item.sep { height: 1px; background: #d7d4cf; margin: 4px 10px; pointer-events: none; }
+  .wazoo-item .wazoo-icon { font-size: 13px; }
+  .wazoo-item .wazoo-name { flex: 1; }
+  .wazoo-item .wazoo-badge {
+    background: #326ea5;
+    color: white;
+    font-size: 8pt;
+    padding: 1px 6px;
+    border-radius: 8px;
+    min-width: 20px;
+    text-align: center;
+  }
+  .wazoo-item.selected .wazoo-badge { background: white; color: #326ea5; }
+  .wazoo-item .wazoo-expand { font-size: 8pt; color: #78726c; width: 12px; }
+  .wazoo-item.depth-1 { padding-left: 30px; }
+  .wazoo-item.depth-2 { padding-left: 48px; }
+  .wazoo-tabs {
+    display: flex;
+    border-top: 1px solid #d7d4cf;
+    background: #e6e3de;
+  }
+  .wazoo-tab {
+    flex: 1;
+    text-align: center;
+    padding: 6px 4px;
+    font-size: 9pt;
+    cursor: pointer;
+    color: #5f5a53;
+  }
+  .wazoo-tab.selected {
+    background: #326ea5;
+    color: white;
+  }
+  .wazoo-tab:not(.selected):hover { background: #dddad5; }
+
+  /* ===== Right panel ===== */
+  #right-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    background: #f5f3f0;
+  }
+
+  /* ===== Tab bar ===== */
+  #tabbar {
+    display: flex;
+    background: #ebebeb;
+    border-bottom: 1px solid #d2cfc8;
+    flex-shrink: 0;
+  }
+  .tab {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 14px;
+    height: 28px;
+    font-size: 9pt;
+    cursor: pointer;
+    color: #5f5a53;
+    border-right: 1px solid #d2cfc8;
+    white-space: nowrap;
+    position: relative;
+  }
+  .tab:hover:not(.selected) { background: rgba(255,255,255,0.5); }
+  .tab.selected {
+    background: #fcfbf9;
+    color: #231e19;
+    border-top: 2px solid #326ea5;
+    margin-top: -1px;
+  }
+  .tab .tab-close {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    line-height: 14px;
+    text-align: center;
+    border-radius: 50%;
+    font-size: 10px;
+    color: #78726c;
+    cursor: pointer;
+  }
+  .tab .tab-close:hover { background: #e03228; color: white; }
+
+  /* ===== Pages ===== */
+  .page {
+    display: none;
+    flex: 1;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .page.active { display: flex; }
+
+  /* ===== Message list ===== */
+  .msg-list-wrap {
+    flex: 2;
+    overflow-y: auto;
+    min-height: 0;
+    background: white;
+  }
+  table.msg-list {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 9.5pt;
+  }
+  table.msg-list thead th {
+    background: #f5f3f0;
+    color: #504b44;
+    font-weight: normal;
+    text-align: left;
+    padding: 4px 6px;
+    border-bottom: 1px solid #dedbd6;
+    font-size: 9pt;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    white-space: nowrap;
+  }
+  table.msg-list tbody tr {
+    border-bottom: 1px solid #e8e5e0;
+    cursor: pointer;
+    height: 22px;
+  }
+  table.msg-list tbody tr:nth-child(even) { background: #fafaf8; }
+  table.msg-list tbody tr:hover { background: #eeecea; }
+  table.msg-list tbody tr.selected { background: #326ea5; color: white; }
+  table.msg-list tbody tr.selected td { color: white; }
+  table.msg-list td {
+    padding: 2px 6px;
+    vertical-align: middle;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+  td.col-s { width: 24px; text-align: center; }
+  td.col-p { width: 22px; text-align: center; }
+  td.col-a { width: 22px; text-align: center; }
+  td.col-f { width: 22px; text-align: center; }
+  td.col-who { width: 185px; }
+  td.col-date { width: 150px; color: #78726c; font-size: 9pt; }
+  td.col-size { width: 55px; text-align: right; color: #78726c; font-size: 9pt; }
+  td.col-subj { max-width: 0; width: 100%; }
+  tr.unread td.col-who,
+  tr.unread td.col-subj { font-weight: bold; color: #231e19; }
+  tr.selected td.col-who,
+  tr.selected td.col-subj { font-weight: bold; }
+  .dot-unread {
+    display: inline-block;
+    width: 6px; height: 6px;
+    background: #326ea5;
+    border-radius: 50%;
+    vertical-align: middle;
+  }
+  .pri-highest { color: #d23720; }
+  .pri-high { color: #d23720; }
+
+  /* ===== Message header ===== */
+  .msg-header {
+    flex-shrink: 0;
+    background: #f8f7f4;
+    border-bottom: 1px solid #d7d4cf;
+    padding: 7px 10px;
+    font-size: 9pt;
+    line-height: 1.8;
+  }
+  .msg-header .lbl { color: #6a6560; min-width: 55px; display: inline-block; }
+  .msg-header .subj { font-weight: bold; color: #231e19; }
+  .msg-header .meta { color: #6a6560; font-size: 8.5pt; }
+
+  /* ===== Message body / viewer ===== */
+  .msg-body {
+    flex: 3;
+    overflow-y: auto;
+    background: white;
+    min-height: 0;
+  }
+  .msg-body-inner {
+    font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-size: 10.5pt;
+    padding: 16px 20px;
+    line-height: 1.6;
+    max-width: 900px;
+  }
+
+  /* ===== Outbox page ===== */
+  #page-out .msg-header .lbl-to { color: #6a6560; }
+
+  /* ===== Contacts page ===== */
+  #page-contacts {
+    flex-direction: row !important;
+  }
+  .contact-list-wrap {
+    width: 280px;
+    flex-shrink: 0;
+    overflow-y: auto;
+    background: white;
+    border-right: 1px solid #d2cfc8;
+  }
+  .contact-search {
+    padding: 8px;
+  }
+  .contact-search input {
+    width: 100%;
+    padding: 6px 10px;
+    border: 1px solid #d7d4cf;
+    border-radius: 6px;
+    font-size: 9pt;
+    background: white;
+    color: #231e19;
+    font-family: inherit;
+  }
+  .contact-section-hdr {
+    font-weight: bold;
+    font-size: 9pt;
+    color: #326ea5;
+    padding: 4px 14px 2px;
+    border-bottom: 1px solid #eeecea;
+  }
+  .contact-card {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    height: 68px;
+    cursor: pointer;
+    border-bottom: 1px solid #f0eeea;
+  }
+  .contact-card:hover { background: #eeecea; }
+  .contact-card.selected { background: #326ea5; }
+  .contact-card.selected .contact-name,
+  .contact-card.selected .contact-title,
+  .contact-card.selected .contact-email { color: white; }
+  .avatar {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-size: 15px;
+    font-weight: bold;
+    flex-shrink: 0;
+    position: relative;
+  }
+  .avatar .online-dot {
+    position: absolute;
+    bottom: 1px;
+    right: 1px;
+    width: 10px;
+    height: 10px;
+    background: #2ea043;
+    border: 2px solid white;
+    border-radius: 50%;
+  }
+  .contact-info { flex: 1; min-width: 0; overflow: hidden; }
+  .contact-name { font-weight: bold; font-size: 10pt; color: #231e19; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .contact-title { font-size: 8.5pt; color: #231e19; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .contact-email { font-size: 8pt; color: #78726c; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* Contact detail */
+  .contact-detail-wrap {
+    flex: 1;
+    overflow-y: auto;
+    background: #f5f3f0;
+    padding: 20px;
+  }
+  .contact-detail-card {
+    max-width: 440px;
+    background: white;
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+  }
+  .contact-banner {
+    height: 80px;
+  }
+  .contact-banner-inner {
+    height: 100%;
+    border-radius: 8px 8px 0 0;
+  }
+  .contact-avatar-area {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin-top: -36px;
+    padding-bottom: 8px;
+  }
+  .contact-avatar-large {
+    width: 72px;
+    height: 72px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 26px;
+    font-weight: bold;
+    color: white;
+    border: 4px solid white;
+    position: relative;
+  }
+  .contact-avatar-large .online-dot {
+    position: absolute;
+    bottom: 2px;
+    right: 2px;
+    width: 12px;
+    height: 12px;
+    background: #2ea043;
+    border: 2px solid white;
+    border-radius: 50%;
+  }
+  .contact-detail-name {
+    font-size: 14pt;
+    font-weight: bold;
+    margin-top: 6px;
+    color: #231e19;
+  }
+  .contact-detail-title { font-size: 9pt; color: #6a6560; margin-top: 2px; }
+  .contact-detail-online { font-size: 8pt; font-weight: bold; color: #2ea043; margin-top: 2px; }
+  .contact-detail-body { padding: 0 20px 16px; }
+  .contact-detail-divider { border: none; border-top: 1px solid #d7d4cf; margin: 10px 0; }
+  .contact-info-row { display: flex; gap: 10px; margin-bottom: 12px; align-items: flex-start; }
+  .contact-info-icon { color: #326ea5; font-size: 15px; margin-top: 2px; }
+  .contact-info-label { font-size: 7.5pt; font-weight: bold; color: #6a6560; text-transform: uppercase; }
+  .contact-info-value { font-size: 10pt; color: #231e19; }
+  .contact-info-value.email { color: #326ea5; }
+  .contact-detail-actions {
+    display: flex;
+    gap: 8px;
+    margin: 14px 0 6px;
+  }
+  .contact-action-btn {
+    flex: 1;
+    padding: 8px 0;
+    border-radius: 6px;
+    text-align: center;
+    font-size: 9pt;
+    cursor: pointer;
+    border: 1px solid #d7d4cf;
+    background: white;
+    color: #231e19;
+  }
+  .contact-action-btn.primary { background: #326ea5; color: white; border-color: #326ea5; }
+  .contact-action-btn:hover:not(.primary) { background: #eeecea; }
+  .recent-emails-section { margin-top: 12px; }
+  .recent-label { font-size: 7.5pt; font-weight: bold; color: #6a6560; text-transform: uppercase; margin-bottom: 6px; }
+  .recent-email-row {
+    background: white;
+    border: 1px solid #d7d4cf;
+    border-radius: 4px;
+    padding: 6px 10px;
+    margin-bottom: 6px;
+  }
+  .recent-email-subj { font-size: 9pt; color: #231e19; }
+  .recent-email-date { font-size: 8pt; color: #6a6560; }
+
+  /* ===== Filters page ===== */
+  #page-filters {
+    background: white;
+  }
+  .filters-header {
+    display: flex;
+    align-items: center;
+    padding: 10px 16px;
+    border-bottom: 1px solid #d7d4cf;
+    gap: 10px;
+  }
+  .filters-title { font-size: 11pt; font-weight: bold; color: #231e19; flex: 1; }
+  .filters-meta { font-size: 8pt; color: #78726c; }
+  .add-rule-btn {
+    background: #326ea5;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 4px 10px;
+    font-size: 9pt;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .filter-cards { padding: 8px 12px; overflow-y: auto; }
+  .filter-card {
+    background: white;
+    border: 1px solid #d7d4cf;
+    border-radius: 6px;
+    padding: 10px 14px;
+    margin-bottom: 8px;
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+    position: relative;
+  }
+  .filter-card.selected { border-color: #326ea5; border-width: 2px; }
+  .filter-status-bar {
+    width: 4px;
+    border-radius: 2px;
+    align-self: stretch;
+    flex-shrink: 0;
+  }
+  .filter-status-bar.active { background: #2ea043; }
+  .filter-status-bar.inactive { background: #78726c; }
+  .filter-toggle {
+    display: inline-flex;
+    align-items: center;
+    margin-top: 4px;
+  }
+  .toggle-track {
+    width: 38px;
+    height: 20px;
+    border-radius: 10px;
+    position: relative;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .toggle-track.on { background: #2ea043; }
+  .toggle-track.off { background: #78726c; }
+  .toggle-knob {
+    position: absolute;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: white;
+    top: 2px;
+    transition: left 0.15s;
+  }
+  .toggle-track.on .toggle-knob { left: 20px; }
+  .toggle-track.off .toggle-knob { left: 2px; }
+  .filter-body { flex: 1; min-width: 0; }
+  .filter-num { font-size: 8pt; color: #78726c; }
+  .filter-name { font-weight: bold; color: #231e19; font-size: 10pt; }
+  .filter-name.inactive { color: #78726c; }
+  .filter-row { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+  .filter-pill {
+    font-size: 7pt;
+    font-weight: bold;
+    color: white;
+    padding: 1px 5px;
+    border-radius: 3px;
+    text-transform: uppercase;
+  }
+  .filter-pill.if { background: #326ea5; }
+  .filter-pill.then { background: #2ea043; }
+  .filter-pill.then.junk { background: #d97706; }
+  .filter-arrow { color: #326ea5; font-size: 12px; }
+  .filter-text { font-size: 9pt; color: #231e19; }
+  .filter-text.inactive { color: #78726c; }
+  .filter-action-text { font-size: 9pt; color: #326ea5; }
+  .filter-action-text.inactive { color: #78726c; }
+  .filter-status-pill {
+    position: absolute;
+    bottom: 8px;
+    right: 10px;
+    font-size: 8pt;
+    color: white;
+    padding: 2px 8px;
+    border-radius: 8px;
+  }
+  .filter-status-pill.active { background: #2ea043; }
+  .filter-status-pill.inactive { background: #78726c; }
+
+  /* ===== Compose page ===== */
+  #page-compose { display: none; }
+  #page-compose.active { display: flex; }
+  .compose-header {
+    flex-shrink: 0;
+    background: #f8f7f4;
+    border-bottom: 1px solid #d7d4cf;
+    padding: 6px 0;
+  }
+  .compose-row {
+    display: flex;
+    align-items: center;
+    height: 24px;
+    padding: 0;
+  }
+  .compose-label {
+    width: 68px;
+    padding-left: 10px;
+    font-size: 9pt;
+    color: #6e6960;
+    flex-shrink: 0;
+  }
+  .compose-value {
+    flex: 1;
+    margin: 2px 10px 2px 0;
+    padding: 0 6px;
+    height: 20px;
+    border: 1px solid #d7d4cf;
+    border-radius: 4px;
+    background: white;
+    font-size: 10pt;
+    font-family: inherit;
+    color: #231e19;
+  }
+  .compose-value:focus { outline: none; border-color: #326ea5; box-shadow: 0 0 0 2px rgba(50,110,165,0.2); }
+  .compose-plain {
+    flex: 1;
+    padding-left: 6px;
+    font-size: 10pt;
+    color: #231e19;
+  }
+  .compose-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    background: #f5f3f0;
+    border-bottom: 1px solid #d2cfc8;
+    padding: 2px 4px;
+    gap: 2px;
+    flex-shrink: 0;
+  }
+  .ctbtn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 30px;
+    min-width: 28px;
+    padding: 0 6px;
+    border: none;
+    background: transparent;
+    color: #231e19;
+    font-size: 10pt;
+    cursor: pointer;
+    border-radius: 6px;
+    font-family: inherit;
+  }
+  .ctbtn:hover { background: #e6e3de; }
+  .ctbtn.accent { background: #326ea5; color: white; }
+  .ctbtn.sep { margin-right: 4px; border-right: 1px solid rgba(35,30,25,0.12); }
+  .compose-editor {
+    flex: 1;
+    overflow-y: auto;
+    background: white;
+    min-height: 0;
+  }
+  .compose-editor-inner {
+    padding: 14px 18px;
+    font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-size: 10.5pt;
+    line-height: 1.6;
+    min-height: 100%;
+    outline: none;
+  }
+  .compose-sig {
+    margin-top: 20px;
+    padding-top: 8px;
+    border-top: 1px solid currentColor;
+    opacity: 0.3;
+    font-size: 9pt;
+  }
+
+  /* ===== Status bar ===== */
+  #statusbar {
+    display: flex;
+    align-items: center;
+    height: 24px;
+    background: #f5f3f0;
+    border-top: 1px solid #d2cfc8;
+    font-size: 8.5pt;
+    flex-shrink: 0;
+  }
+  #statusbar .sb-left {
+    flex: 1;
+    padding-left: 10px;
+    color: #231e19;
+    border-right: 1px solid #d2cfc8;
+  }
+  #statusbar .sb-center {
+    flex: 1;
+    text-align: center;
+    color: #78726c;
+    border-right: 1px solid #d2cfc8;
+  }
+  #statusbar .sb-right {
+    flex: 1;
+    text-align: right;
+    padding-right: 10px;
+    color: #78726c;
+  }
+
+  /* ===== Email body styles (used inside .msg-body-inner) ===== */
+  .msg-body-inner p { margin-bottom: 10px; }
+  .msg-body-inner h3 { margin: 14px 0 6px; }
+  .msg-body-inner ul, .msg-body-inner ol { padding-left: 20px; margin-bottom: 10px; }
+  .msg-body-inner li { margin-bottom: 4px; }
+  .msg-body-inner blockquote {
+    margin: 12px 0 0 0;
+    padding: 0 0 0 10px;
+    border-left: 3px solid #326ea5;
+  }
+  .msg-body-inner table { border-collapse: collapse; }
+
+  /* ===== Calendar invite card ===== */
+  .cal-card {
+    border: 1px solid #ccc;
+    border-radius: 10px;
+    overflow: hidden;
+    margin-bottom: 16px;
+    max-width: 520px;
+  }
+  .cal-header {
+    background: #326ea5;
+    padding: 16px 20px;
+    color: white;
+  }
+  .cal-header .cal-label { font-size: 9pt; opacity: 0.8; text-transform: uppercase; }
+  .cal-header .cal-title { font-size: 16pt; font-weight: bold; margin-top: 4px; }
+  .cal-body { padding: 16px 20px; }
+  .cal-table { width: 100%; border-collapse: collapse; }
+  .cal-table td { padding: 8px 0; vertical-align: top; }
+  .cal-table .cal-field { width: 95px; font-size: 9pt; font-weight: bold; text-transform: uppercase; opacity: 0.5; }
+  .cal-agenda {
+    margin: 14px 0;
+    padding: 12px;
+    background: rgba(0,0,0,0.04);
+    border-radius: 6px;
+  }
+  .cal-agenda-label { font-size: 9pt; text-transform: uppercase; font-weight: bold; opacity: 0.5; margin-bottom: 6px; }
+  .cal-agenda ol { margin: 0; padding-left: 18px; }
+  .cal-rsvp { display: flex; margin-top: 12px; }
+  .cal-rsvp-btn {
+    flex: 1;
+    text-align: center;
+    padding: 8px 10px;
+  }
+  .cal-rsvp-inner {
+    border-radius: 6px;
+    padding: 8px 0;
+    font-weight: bold;
+    text-align: center;
+  }
+  .cal-rsvp-inner.accept { background: #2ea043; color: white; }
+  .cal-rsvp-inner.tentative { background: #d97706; color: white; }
+  .cal-rsvp-inner.decline { border: 1px solid #ccc; opacity: 0.6; }
+
+  /* ===== Security table ===== */
+  .security-table { width: 100%; border-collapse: collapse; margin: 12px 0; }
+  .security-table td { padding: 4px 12px; }
+  .security-table tr:nth-child(even) { background: rgba(0,0,0,0.03); }
+
+  /* Dark mode */
+  .dark body { background: #1e1e21; color: #cdc8c1; }
+  .dark #app,
+  .dark #toolbar,
+  .dark #statusbar {
+    background: #1a1a1d;
+    border-color: #32323a;
+  }
+  .dark .tbtn,
+  .dark .ctbtn {
+    color: #cdc8c1;
+  }
+  .dark .tbtn:hover,
+  .dark .ctbtn:hover {
+    background: #2a2a2f;
+  }
+  .dark #wazoo,
+  .dark .msg-list-wrap,
+  .dark .msg-body,
+  .dark .contact-list-wrap,
+  .dark .contact-search input,
+  .dark #page-filters,
+  .dark .filter-cards,
+  .dark .compose-editor {
+    background: #121215;
+  }
+  .dark #right-panel,
+  .dark .contact-detail-wrap {
+    background: #1e1e21;
+  }
+  .dark .wazoo-item {
+    color: #c8c3bc;
+  }
+  .dark .wazoo-item:hover,
+  .dark table.msg-list tbody tr:hover:not(.selected),
+  .dark .contact-card:hover,
+  .dark .recent-email-row:hover {
+    background: #202025;
+  }
+  .dark .tab.selected,
+  .dark .wazoo-item.selected,
+  .dark table.msg-list tbody tr.selected,
+  .dark .contact-card.selected {
+    background: #2d4d78;
+    color: #ffffff;
+  }
+  .dark .wazoo-tabs,
+  .dark #tabbar,
+  .dark .compose-toolbar,
+  .dark .msg-header,
+  .dark .compose-header {
+    background: #161619;
+    border-color: #282830;
+  }
+  .dark .tab {
+    color: #827d76;
+    border-color: #32323a;
+  }
+  .dark .tab:hover:not(.selected) {
+    background: #202025;
+    color: #d2cdc6;
+  }
+  .dark .tab.selected {
+    background: #202024;
+    color: #d2cdc6;
+    border-top-color: #326ea5;
+  }
+  .dark .tab .tab-close {
+    color: #9a948c;
+  }
+  .dark .tab .tab-close:hover {
+    background: #e03228;
+    color: #ffffff;
+  }
+  .dark table.msg-list thead th {
+    background: #181818;
+    color: #7d7870;
+    border-color: #282830;
+  }
+  .dark table.msg-list tbody tr {
+    border-color: #242428;
+  }
+  .dark table.msg-list tbody tr:nth-child(even) {
+    background: #161619;
+  }
+  .dark table.msg-list td {
+    color: #c8c3bc;
+  }
+  .dark td.col-date,
+  .dark td.col-size {
+    color: #8e8982;
+  }
+  .dark tr.unread td.col-who,
+  .dark tr.unread td.col-subj {
+    color: #f0ebe4;
+  }
+  .dark table.msg-list tbody tr.selected td,
+  .dark table.msg-list tbody tr.selected td.col-date,
+  .dark table.msg-list tbody tr.selected td.col-size,
+  .dark table.msg-list tbody tr.selected td.col-who,
+  .dark table.msg-list tbody tr.selected td.col-subj {
+    color: #ffffff;
+  }
+  .dark .msg-header,
+  .dark .compose-header,
+  .dark .compose-editor-inner,
+  .dark .msg-body-inner,
+  .dark .contact-name,
+  .dark .contact-title,
+  .dark .contact-detail-name,
+  .dark .contact-info-value,
+  .dark .contact-notes-text,
+  .dark .recent-email-subj,
+  .dark .filters-title,
+  .dark .filter-name,
+  .dark .filter-text {
+    color: #c8c3bc;
+  }
+  .dark .msg-header .lbl,
+  .dark .msg-header .meta,
+  .dark .msg-header .lbl-to,
+  .dark .contact-email,
+  .dark .contact-detail-title,
+  .dark .contact-info-label,
+  .dark .recent-label,
+  .dark .recent-email-date,
+  .dark .filters-meta,
+  .dark .filter-num,
+  .dark .filter-name.inactive,
+  .dark .filter-text.inactive,
+  .dark .filter-action-text.inactive,
+  .dark #sb-center,
+  .dark #sb-right {
+    color: #7d7870;
+  }
+  .dark .msg-header .subj,
+  .dark .contact-info-value.email,
+  .dark .contact-section-hdr,
+  .dark .filter-action-text,
+  .dark .filter-arrow {
+    color: #6da8df;
+  }
+  .dark .filter-card,
+  .dark .contact-detail-card,
+  .dark .contact-action-btn,
+  .dark .recent-email-row {
+    background: #202024;
+    border-color: #2c2c30;
+  }
+  .dark .contact-card,
+  .dark .contact-section-hdr {
+    border-color: #242428;
+  }
+  .dark .contact-card.selected .contact-name,
+  .dark .contact-card.selected .contact-title,
+  .dark .contact-card.selected .contact-email {
+    color: #ffffff;
+  }
+  .dark .contact-search input {
+    border-color: #32323a;
+    color: #c8c3bc;
+  }
+  .dark .contact-detail-divider,
+  .dark .filters-header {
+    border-color: #32323a;
+  }
+  .dark .contact-action-btn:hover:not(.primary) {
+    background: #2a2a2f;
+  }
+  .dark .compose-value {
+    background: #1c1c1f;
+    border-color: #2c2c30;
+    color: #c8c3bc;
+  }
+  .dark #sb-left {
+    color: #c8c3bc;
+    border-color: #32323a;
+  }
+</style>
+</head>
+<body>
+
+<div id="app">
+
+  <!-- ===== Toolbar ===== -->
+  <div id="toolbar">
+    <button class="tbtn sep" data-action="check-mail">📥 Check Mail</button>
+    <button class="tbtn accent" data-action="new-message">✏ New Message</button>
+    <button class="tbtn" data-action="reply">↩ Reply</button>
+    <button class="tbtn" data-action="reply-all">⇏ Reply All</button>
+    <button class="tbtn sep" data-action="forward">→ Forward</button>
+    <button class="tbtn" data-action="trash">🗑 Trash</button>
+    <button class="tbtn sep" data-action="junk">⛔ Junk</button>
+    <button class="tbtn" data-action="print">🖨 Print</button>
+    <button class="tbtn sep" data-action="find">🔍 Find</button>
+    <button class="tbtn sep" data-action="open-settings">⚙ Settings</button>
+    <span id="tb-spacer"></span>
+    <button class="tbtn sep" id="btn-skin" data-action="switch-skin" title="Switch to Email skin">🎨 Email Skin</button>
+    <button class="tbtn" id="btn-dark" data-action="toggle-dark" title="Toggle dark mode">☽</button>
+  </div>
+
+  <!-- ===== Content ===== -->
+  <div id="content">
+
+    <!-- Wazoo sidebar (populated from program) -->
+    <div id="wazoo">
+      <div id="wazoo-tree"></div>
+      <div class="wazoo-tabs">
+        <div class="wazoo-tab selected">Mailboxes</div>
+        <div class="wazoo-tab">Signatures</div>
+        <div class="wazoo-tab">Stationery</div>
+      </div>
+    </div>
+
+    <!-- Right panel -->
+    <div id="right-panel">
+
+      <!-- Tab bar -->
+      <div id="tabbar">
+        <div class="tab selected" id="tab-in" data-tab="in">📥 In</div>
+        <div class="tab" id="tab-out" data-tab="out">📤 Out</div>
+        <div class="tab" id="tab-contacts" data-tab="contacts">👥 Contacts</div>
+        <div class="tab" id="tab-filters" data-tab="filters">📋 Filters</div>
+        <div class="tab" id="tab-settings" data-action="open-settings">⚙ Settings</div>
+        <div class="tab" id="compose-tab" data-tab="compose" style="display:none;">
+          <span id="compose-tab-label">✏ New Message</span> <span class="tab-close">×</span>
+        </div>
+      </div>
+
+      <!-- ===== Page: Mailbox View (In / Selected Mailbox) ===== -->
+      <div class="page active" id="page-in">
+
+        <!-- Message list -->
+        <div class="msg-list-wrap">
+          <table class="msg-list">
+            <thead>
+              <tr>
+                <th class="col-s"></th>
+                <th class="col-p">P</th>
+                <th class="col-a">📎</th>
+                <th class="col-f">⚑</th>
+                <th class="col-who" id="in-who-header">Who</th>
+                <th class="col-date">Date</th>
+                <th class="col-size">Size</th>
+                <th class="col-subj">Subject</th>
+              </tr>
+            </thead>
+            <tbody id="inbox-rows"></tbody>
+          </table>
+        </div>
+
+        <!-- Message header -->
+        <div class="msg-header" id="inbox-hdr">
+          <div><span class="lbl">From:</span> <span id="in-from"></span></div>
+          <div><span class="lbl">To:</span> <span id="in-to"></span><span id="in-cc-area"></span></div>
+          <div><span class="lbl">Subj:</span> <span class="subj" id="in-subj"></span></div>
+          <div class="meta" id="in-meta"></div>
+        </div>
+
+        <!-- Message body -->
+        <div class="msg-body">
+          <div class="msg-body-inner" id="in-body"></div>
+        </div>
+
+      </div><!-- /page-in -->
+
+      <!-- ===== Page: Outbox ===== -->
+      <div class="page" id="page-out">
+
+        <div class="msg-list-wrap">
+          <table class="msg-list">
+            <thead>
+              <tr>
+                <th class="col-s"></th>
+                <th class="col-p">P</th>
+                <th class="col-a">📎</th>
+                <th class="col-f">⚑</th>
+                <th class="col-who">To</th>
+                <th class="col-date">Date</th>
+                <th class="col-size">Size</th>
+                <th class="col-subj">Subject</th>
+              </tr>
+            </thead>
+            <tbody id="outbox-rows"></tbody>
+          </table>
+        </div>
+
+        <div class="msg-header">
+          <div><span class="lbl">From:</span> <span id="out-from"></span></div>
+          <div><span class="lbl">To:</span> <span id="out-to"></span><span id="out-cc-area"></span></div>
+          <div><span class="lbl">Subj:</span> <span class="subj" id="out-subj"></span></div>
+          <div class="meta" id="out-meta"></div>
+        </div>
+
+        <div class="msg-body">
+          <div class="msg-body-inner" id="out-body"></div>
+        </div>
+
+      </div><!-- /page-out -->
+
+      <!-- ===== Page: Contacts ===== -->
+      <div class="page" id="page-contacts">
+
+        <div class="contact-list-wrap">
+          <div class="contact-search">
+            <input type="text" placeholder="🔍  Search contacts...">
+          </div>
+          <div id="contact-list-inner"></div>
+        </div>
+
+        <div class="contact-detail-wrap">
+          <div id="contact-detail-inner"></div>
+        </div>
+
+      </div><!-- /page-contacts -->
+
+      <!-- ===== Page: Filters ===== -->
+      <div class="page" id="page-filters">
+        <div class="filters-header">
+          <span class="filters-title">📋 Mail Filters</span>
+          <span class="filters-meta" id="filters-meta"></span>
+          <button class="add-rule-btn">+ New Rule</button>
+        </div>
+        <div class="filter-cards" id="filter-cards"></div>
+      </div><!-- /page-filters -->
+
+      <!-- ===== Page: Compose ===== -->
+      <div class="page" id="page-compose">
+        <div class="compose-header">
+          <div class="compose-row">
+            <span class="compose-label">From:</span>
+            <span class="compose-plain" id="compose-from"></span>
+          </div>
+          <div class="compose-row">
+            <span class="compose-label">To:</span>
+            <input class="compose-value" id="compose-to" type="text">
+          </div>
+          <div class="compose-row">
+            <span class="compose-label">Cc:</span>
+            <input class="compose-value" id="compose-cc" type="text">
+          </div>
+          <div class="compose-row">
+            <span class="compose-label">Bcc:</span>
+            <input class="compose-value" id="compose-bcc" type="text">
+          </div>
+          <div class="compose-row">
+            <span class="compose-label">Subject:</span>
+            <input class="compose-value" id="compose-subj" type="text">
+          </div>
+          <div class="compose-row">
+            <span class="compose-label">Attach:</span>
+            <span class="compose-plain" id="compose-attach" style="color:#78726c;"></span>
+          </div>
+          <div class="compose-row">
+            <span class="compose-label">Priority:</span>
+            <span class="compose-plain" id="compose-priority"></span>
+          </div>
+        </div>
+        <div class="compose-toolbar">
+          <button class="ctbtn accent" data-action="send">✉ Send</button>
+          <button class="ctbtn" data-action="queue">Queue</button>
+          <button class="ctbtn sep" data-action="discard">Discard</button>
+          <button class="ctbtn" style="font-weight:bold">B</button>
+          <button class="ctbtn" style="font-style:italic">I</button>
+          <button class="ctbtn" style="text-decoration:underline">U</button>
+          <button class="ctbtn sep"><s>S</s></button>
+          <button class="ctbtn">A+</button>
+          <button class="ctbtn sep">A−</button>
+          <button class="ctbtn sep">🎨</button>
+          <button class="ctbtn">•</button>
+          <button class="ctbtn sep">1.</button>
+          <button class="ctbtn">»</button>
+          <button class="ctbtn">«</button>
+          <button class="ctbtn sep">—</button>
+          <button class="ctbtn sep">🔗</button>
+          <button class="ctbtn">📎 Attach</button>
+          <button class="ctbtn">Signature</button>
+        </div>
+        <div class="compose-editor">
+          <div class="compose-editor-inner" id="compose-body" contenteditable="true"></div>
+        </div>
+      </div><!-- /page-compose -->
+
+    </div><!-- /right-panel -->
+  </div><!-- /content -->
+
+  <!-- ===== Status bar ===== -->
+  <div id="statusbar">
+    <span class="sb-left" id="sb-left"></span>
+    <span class="sb-center" id="sb-center"></span>
+    <span class="sb-right" id="sb-right"></span>
+  </div>
+
+</div><!-- /app -->
+
+</body>
+</html>

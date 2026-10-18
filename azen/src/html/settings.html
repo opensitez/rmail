@@ -1,0 +1,827 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Eudora — Settings &amp; Configuration</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    height: 100%; overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size: 13px; background: #edeae4; color: #1c1917; user-select: none;
+  }
+  .app { display: flex; flex-direction: column; height: 100vh; width: 100vw; overflow: hidden; }
+
+  /* ── TOP BAR ── */
+  .toolbar {
+    display: flex; align-items: center; gap: 3px; height: 40px; padding: 0 10px;
+    background: linear-gradient(180deg, #faf8f5 0%, #edeae2 100%);
+    border-bottom: 1px solid #d4cfc6; flex-shrink: 0;
+  }
+  .tb-brand {
+    display: flex; align-items: center; gap: 7px; padding-right: 12px;
+    border-right: 1px solid #ddd8ce; margin-right: 6px;
+  }
+  .tb-logo {
+    width: 24px; height: 24px; border-radius: 6px;
+    background: linear-gradient(135deg, #c2410c 0%, #ea580c 60%, #f97316 100%);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; color: #fff; font-weight: 800; flex-shrink: 0;
+    box-shadow: 0 1px 3px rgba(194,65,12,.35);
+  }
+  .tb-name { font-size: 14px; font-weight: 700; color: #1c1917; letter-spacing: -0.3px; }
+  .tb-ver  { font-size: 10px; color: #a8a29e; font-weight: 500; margin-top: 1px; }
+
+  .tb-btn {
+    display: flex; align-items: center; gap: 5px; padding: 5px 10px;
+    border-radius: 6px; border: 1px solid transparent; background: transparent;
+    color: #44403c; font-size: 12px; font-weight: 500; cursor: pointer; white-space: nowrap;
+  }
+  .tb-btn:hover { background: #e5e0d8; border-color: #d4cfc6; color: #1c1917; }
+  .tb-btn.primary { background: #ea580c; color: #fff; border-color: #c2410c; font-weight: 600; }
+  .tb-btn.primary:hover { background: #c2410c; }
+  .tb-sep { width: 1px; height: 20px; background: #d4cfc6; margin: 0 4px; flex-shrink: 0; }
+  .tb-spacer { flex: 1; }
+
+  /* ── TAB BAR ── */
+  .tabbar {
+    display: flex; align-items: flex-end; height: 32px; padding: 0 8px;
+    background: #e5e0d8; border-bottom: 1px solid #ccc6bc; gap: 2px; flex-shrink: 0;
+  }
+  .tab {
+    display: flex; align-items: center; gap: 6px; padding: 5px 13px 6px;
+    border-radius: 6px 6px 0 0; font-size: 12px; font-weight: 500; color: #78716c;
+    cursor: pointer; border: 1px solid transparent; border-bottom: none;
+    background: #ddd8ce; position: relative; top: 1px; white-space: nowrap;
+  }
+  .tab:hover { background: #e8e3db; color: #292524; }
+  .tab.active {
+    background: #f7f4ef; color: #1c1917; font-weight: 600;
+    border-color: #ccc6bc; border-bottom-color: #f7f4ef; z-index: 2;
+  }
+
+  /* ── MAIN WORKSPACE ── */
+  .workspace { display: flex; flex: 1; min-height: 0; overflow: hidden; background: #f7f4ef; }
+
+  /* ── LEFT CATEGORY LIST (Eudora Options Sidebar) ── */
+  .cat-sidebar {
+    width: 220px; min-width: 220px; background: #f2efe9;
+    border-right: 1px solid #d4cfc6; display: flex; flex-direction: column; overflow: hidden;
+  }
+  .cat-header {
+    padding: 9px 12px 7px; font-size: 10px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.7px; color: #78716c; border-bottom: 1px solid #e4dfd7;
+    background: #eae5dc;
+  }
+  .cat-list { flex: 1; overflow-y: auto; padding: 6px; display: flex; flex-direction: column; gap: 2px; }
+  .cat-item {
+    display: flex; align-items: center; gap: 9px; padding: 7px 10px;
+    border-radius: 6px; cursor: pointer; color: #44403c; font-size: 12.5px;
+    font-weight: 500; border: 1px solid transparent;
+  }
+  .cat-item:hover { background: #e5e0d8; color: #1c1917; }
+  .cat-item.active {
+    background: #ea580c; color: #fff; font-weight: 600;
+    border-color: #c2410c; box-shadow: 0 1px 2px rgba(194,65,12,.25);
+  }
+  .cat-ico {
+    width: 22px; height: 22px; border-radius: 5px; background: rgba(0,0,0,0.06);
+    display: flex; align-items: center; justify-content: center; font-size: 12px; flex-shrink: 0;
+  }
+  .cat-item.active .cat-ico { background: rgba(255,255,255,0.22); color: #fff; }
+
+  /* ── RIGHT SETTINGS CONTENT ── */
+  .settings-main {
+    flex: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden;
+    background: #faf8f5;
+  }
+  .settings-titlebar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 20px; background: #f2efe9; border-bottom: 1px solid #ddd8ce; flex-shrink: 0;
+  }
+  .settings-title-wrap { display: flex; align-items: center; gap: 10px; }
+  .settings-title-ico {
+    width: 30px; height: 30px; border-radius: 7px; background: #fff7ed;
+    border: 1px solid #fed7aa; color: #ea580c; display: flex; align-items: center;
+    justify-content: center; font-size: 15px; font-weight: 700;
+  }
+  .settings-title { font-size: 16px; font-weight: 700; color: #1c1917; }
+  .settings-subtitle { font-size: 11.5px; color: #78716c; margin-top: 1px; }
+  .settings-badge {
+    padding: 3px 9px; border-radius: 12px; background: #e8e3db; color: #57534e;
+    font-size: 11px; font-weight: 600;
+  }
+
+  .settings-scroll {
+    flex: 1; overflow-y: auto; padding: 18px 22px;
+  }
+  .settings-panel { display: none; flex-direction: column; gap: 14px; max-width: 760px; }
+  .settings-panel.active { display: flex; }
+
+  /* ── GROUP BOX (Classic Eudora Settings Section) ── */
+  .cfg-group {
+    background: #ffffff; border: 1px solid #dedad2; border-radius: 8px;
+    padding: 14px 16px; display: flex; flex-direction: column; gap: 10px;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.02);
+  }
+  .cfg-group-title {
+    font-size: 11.5px; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.5px; color: #c2410c; padding-bottom: 6px;
+    border-bottom: 1px solid #f0ece4; margin-bottom: 2px;
+  }
+  .cfg-row {
+    display: flex; align-items: center; gap: 12px; min-height: 28px;
+  }
+  .cfg-lbl {
+    width: 170px; min-width: 170px; font-size: 12.5px; font-weight: 500; color: #44403c;
+  }
+  .cfg-input {
+    flex: 1; height: 30px; padding: 0 10px; border-radius: 5px;
+    border: 1px solid #d4cfc6; background: #faf8f5; color: #1c1917;
+    font-size: 12.5px; outline: none;
+  }
+  .cfg-input:focus { border-color: #ea580c; background: #fff; }
+  .cfg-num {
+    width: 76px; height: 28px; padding: 0 8px; border-radius: 5px;
+    border: 1px solid #d4cfc6; background: #faf8f5; color: #1c1917;
+    font-size: 12.5px; text-align: right;
+  }
+  .cfg-select {
+    height: 30px; padding: 0 10px; border-radius: 5px;
+    border: 1px solid #d4cfc6; background: #faf8f5; color: #1c1917;
+    font-size: 12.5px; min-width: 200px;
+  }
+  .cfg-check {
+    display: flex; align-items: center; gap: 8px; font-size: 12.5px;
+    color: #292524; cursor: pointer; padding: 2px 0;
+  }
+  .cfg-check input[type="checkbox"], .cfg-radio input[type="radio"] {
+    accent-color: #ea580c; width: 14px; height: 14px; cursor: pointer;
+  }
+  .cfg-radio-group { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; }
+  .cfg-radio {
+    display: flex; align-items: center; gap: 6px; font-size: 12.5px;
+    color: #292524; cursor: pointer;
+  }
+  .cfg-grid-2 {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 8px 18px;
+  }
+  .cfg-grid-3 {
+    display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px 14px;
+  }
+  .cfg-hint { font-size: 11.5px; color: #78716c; }
+  .swatch {
+    width: 22px; height: 22px; border-radius: 5px; border: 1px solid rgba(0,0,0,0.2);
+    flex-shrink: 0;
+  }
+
+  /* ── FOOTER ACTION BAR ── */
+  .settings-footer {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 20px; background: #f2efe9; border-top: 1px solid #d4cfc6; flex-shrink: 0;
+  }
+  .footer-status { font-size: 12px; color: #57534e; font-weight: 500; }
+  .footer-actions { display: flex; align-items: center; gap: 8px; }
+  .btn-act {
+    padding: 6px 14px; border-radius: 6px; font-size: 12px; font-weight: 600;
+    cursor: pointer; border: 1px solid #cfc9be; background: #fff; color: #292524;
+  }
+  .btn-act:hover { background: #eae5dc; }
+  .btn-act.primary { background: #ea580c; color: #fff; border-color: #c2410c; }
+  .btn-act.primary:hover { background: #c2410c; }
+
+  /* ── STATUS BAR ── */
+  .statusbar {
+    display: flex; align-items: center; gap: 14px; height: 23px; padding: 0 12px;
+    background: #e5e0d8; border-top: 1px solid #ccc6bc; font-size: 11px; color: #78716c; flex-shrink: 0;
+  }
+  .sb-dot { width: 6px; height: 6px; border-radius: 50%; background: #22c55e; display: inline-block; margin-right: 4px; }
+  .sb-right { margin-left: auto; display: flex; gap: 14px; }
+
+  /* ── DARK MODE (.dark) ── */
+  .dark { background: #18181b; color: #e4e4e7; }
+  .dark .toolbar { background: linear-gradient(180deg, #27272a 0%, #1f1f23 100%); border-color: #3f3f46; }
+  .dark .tb-brand { border-color: #3f3f46; }
+  .dark .tb-name { color: #f4f4f5; }
+  .dark .tb-btn { color: #a1a1aa; }
+  .dark .tb-btn:hover { background: #3f3f46; border-color: #52525b; color: #f4f4f5; }
+  .dark .tb-btn.primary { background: #ea580c; color: #fff; border-color: #c2410c; }
+  .dark .tb-sep { background: #3f3f46; }
+  .dark .tabbar { background: #18181b; border-color: #3f3f46; }
+  .dark .tab { background: #27272a; color: #a1a1aa; }
+  .dark .tab:hover { background: #3f3f46; color: #f4f4f5; }
+  .dark .tab.active { background: #1f1f23; color: #f4f4f5; border-color: #3f3f46; border-bottom-color: #1f1f23; }
+  .dark .workspace { background: #18181b; }
+  .dark .cat-sidebar { background: #1f1f23; border-color: #3f3f46; }
+  .dark .cat-header { background: #27272a; border-color: #3f3f46; color: #a1a1aa; }
+  .dark .cat-item { color: #d4d4d8; }
+  .dark .cat-item:hover { background: #27272a; color: #fff; }
+  .dark .cat-item.active { background: #ea580c; color: #fff; border-color: #c2410c; }
+  .dark .cat-ico { background: rgba(255,255,255,0.07); }
+  .dark .settings-main { background: #18181b; }
+  .dark .settings-titlebar { background: #1f1f23; border-color: #3f3f46; }
+  .dark .settings-title { color: #f4f4f5; }
+  .dark .settings-subtitle { color: #a1a1aa; }
+  .dark .settings-badge { background: #27272a; color: #d4d4d8; }
+  .dark .cfg-group { background: #222226; border-color: #3f3f46; }
+  .dark .cfg-group-title { color: #fb923c; border-color: #323238; }
+  .dark .cfg-lbl { color: #d4d4d8; }
+  .dark .cfg-input, .dark .cfg-num, .dark .cfg-select {
+    background: #18181b; border-color: #3f3f46; color: #f4f4f5;
+  }
+  .dark .cfg-check, .dark .cfg-radio { color: #e4e4e7; }
+  .dark .cfg-hint { color: #a1a1aa; }
+  .dark .settings-footer { background: #1f1f23; border-color: #3f3f46; }
+  .dark .footer-status { color: #a1a1aa; }
+  .dark .btn-act { background: #27272a; border-color: #3f3f46; color: #e4e4e7; }
+  .dark .btn-act:hover { background: #3f3f46; }
+  .dark .btn-act.primary { background: #ea580c; border-color: #c2410c; color: #fff; }
+  .dark .statusbar { background: #18181b; border-color: #3f3f46; color: #a1a1aa; }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- TOP TOOLBAR -->
+  <div class="toolbar">
+    <div class="tb-brand">
+      <div class="tb-logo">E</div>
+      <div>
+        <div class="tb-name">Eudora</div>
+        <div class="tb-ver">7.1 Options</div>
+      </div>
+    </div>
+    <button class="tb-btn" data-action="close-settings">← Back to Mail</button>
+    <div class="tb-sep"></div>
+    <button class="tb-btn primary" data-action="save-settings">✓ Save Settings</button>
+    <button class="tb-btn" data-action="reset-settings">↺ Reset Defaults</button>
+    <div class="tb-spacer"></div>
+    <button class="tb-btn" data-action="switch-skin">⇄ Switch Mail Skin</button>
+    <button class="tb-btn" id="btn-dark" data-action="toggle-dark">☽ Dark</button>
+  </div>
+
+  <!-- TAB BAR -->
+  <div class="tabbar">
+    <div class="tab" data-action="close-settings">📥 Mailboxes &amp; Messages</div>
+    <div class="tab active">⚙ Classic Eudora Settings (21 Categories)</div>
+  </div>
+
+  <!-- MAIN WORKSPACE -->
+  <div class="workspace">
+
+    <!-- LEFT CATEGORY LIST (All 21 Eudora Categories) -->
+    <div class="cat-sidebar">
+      <div class="cat-header">Category</div>
+      <div class="cat-list">
+        <div class="cat-item active" data-settings-cat="getting_started"><span class="cat-ico">🏠</span><span>Getting Started</span></div>
+        <div class="cat-item" data-settings-cat="checking_mail"><span class="cat-ico">📥</span><span>Checking Mail</span></div>
+        <div class="cat-item" data-settings-cat="sending_mail"><span class="cat-ico">📤</span><span>Sending Mail</span></div>
+        <div class="cat-item" data-settings-cat="composing"><span class="cat-ico">✏️</span><span>Composing</span></div>
+        <div class="cat-item" data-settings-cat="mailbox_display"><span class="cat-ico">📋</span><span>Mailbox Display</span></div>
+        <div class="cat-item" data-settings-cat="date_display"><span class="cat-ico">📅</span><span>Date Display</span></div>
+        <div class="cat-item" data-settings-cat="styled_text"><span class="cat-ico">🅱</span><span>Styled Text</span></div>
+        <div class="cat-item" data-settings-cat="fonts"><span class="cat-ico">🔤</span><span>Fonts &amp; Display</span></div>
+        <div class="cat-item" data-settings-cat="labels"><span class="cat-ico">🏷</span><span>Labels</span></div>
+        <div class="cat-item" data-settings-cat="attachments"><span class="cat-ico">📎</span><span>Attachments</span></div>
+        <div class="cat-item" data-settings-cat="replying"><span class="cat-ico">↩</span><span>Replying</span></div>
+        <div class="cat-item" data-settings-cat="junk_mail"><span class="cat-ico">🛡</span><span>Junk Mail</span></div>
+        <div class="cat-item" data-settings-cat="toolbar"><span class="cat-ico">🧰</span><span>Toolbar</span></div>
+        <div class="cat-item" data-settings-cat="getting_attention"><span class="cat-ico">🔔</span><span>Getting Attention</span></div>
+        <div class="cat-item" data-settings-cat="hosts"><span class="cat-ico">🌐</span><span>Hosts &amp; Proxies</span></div>
+        <div class="cat-item" data-settings-cat="moving_around"><span class="cat-ico">⌨️</span><span>Moving Around</span></div>
+        <div class="cat-item" data-settings-cat="extra_warnings"><span class="cat-ico">⚠️</span><span>Extra Warnings</span></div>
+        <div class="cat-item" data-settings-cat="miscellaneous"><span class="cat-ico">🔧</span><span>Miscellaneous</span></div>
+        <div class="cat-item" data-settings-cat="accounts"><span class="cat-ico">👤</span><span>Accounts &amp; Personalities</span></div>
+        <div class="cat-item" data-settings-cat="ssl"><span class="cat-ico">🔒</span><span>SSL / TLS</span></div>
+        <div class="cat-item" data-settings-cat="spell_checking"><span class="cat-ico">📝</span><span>Spell Checking</span></div>
+      </div>
+    </div>
+
+    <!-- RIGHT SETTINGS VIEWPORT -->
+    <div class="settings-main">
+      <div class="settings-titlebar">
+        <div class="settings-title-wrap">
+          <div class="settings-title-ico" id="settings-cat-ico">🏠</div>
+          <div>
+            <div class="settings-title" id="settings-cat-title">Getting Started</div>
+            <div class="settings-subtitle" id="settings-cat-sub">Configure basic incoming/outgoing servers and primary identity</div>
+          </div>
+        </div>
+        <span class="settings-badge" id="settings-cat-badge">Category 1 of 21</span>
+      </div>
+
+      <div class="settings-scroll">
+
+        <!-- 1. GETTING STARTED -->
+        <div class="settings-panel active" id="panel-getting_started">
+          <div class="cfg-group">
+            <div class="cfg-group-title">Incoming Mail</div>
+            <div class="cfg-row"><span class="cfg-lbl">User Name:</span><input class="cfg-input" type="text" value="youness"></div>
+            <div class="cfg-row"><span class="cfg-lbl">Mail Server:</span><input class="cfg-input" type="text" value="mail.eudora.org"></div>
+          </div>
+          <div class="cfg-group">
+            <div class="cfg-group-title">Outgoing Mail</div>
+            <div class="cfg-row"><span class="cfg-lbl">Real Name:</span><input class="cfg-input" type="text" value="Youness El Andaloussi"></div>
+            <div class="cfg-row"><span class="cfg-lbl">SMTP Server:</span><input class="cfg-input" type="text" value="smtp.eudora.org"></div>
+            <div class="cfg-row"><span class="cfg-lbl">Email Address:</span><input class="cfg-input" type="text" value="youness@eudora.org"></div>
+          </div>
+          <div class="cfg-group">
+            <div class="cfg-group-title">Default Mailer</div>
+            <label class="cfg-check"><input type="checkbox" checked> Make Eudora the default mail application</label>
+          </div>
+        </div>
+
+        <!-- 2. CHECKING MAIL -->
+        <div class="settings-panel" id="panel-checking_mail">
+          <div class="cfg-group">
+            <div class="cfg-group-title">Account / Server Info</div>
+            <div class="cfg-row"><span class="cfg-lbl">User Name:</span><input class="cfg-input" type="text" value="youness"></div>
+            <div class="cfg-row"><span class="cfg-lbl">Mail Server:</span><input class="cfg-input" type="text" value="mail.eudora.org"></div>
+            <div class="cfg-row">
+              <span class="cfg-lbl">Mail Protocol:</span>
+              <div class="cfg-radio-group">
+                <label class="cfg-radio"><input type="radio" name="proto" checked> POP</label>
+                <label class="cfg-radio"><input type="radio" name="proto"> IMAP</label>
+              </div>
+            </div>
+            <div class="cfg-row">
+              <span class="cfg-lbl">Authentication:</span>
+              <select class="cfg-select">
+                <option selected>Passwords</option>
+                <option>Kerberos</option>
+                <option>APOP</option>
+                <option>CRAM-MD5</option>
+              </select>
+            </div>
+            <label class="cfg-check"><input type="checkbox"> Overlap IMAP/POP commands for faster checks</label>
+          </div>
+          <div class="cfg-group">
+            <div class="cfg-group-title">Connection</div>
+            <div class="cfg-row">
+              <span class="cfg-lbl">Check for mail every:</span>
+              <input class="cfg-num" type="number" value="15">
+              <span class="cfg-hint">minutes (0 = manual only)</span>
+            </div>
+            <label class="cfg-check"><input type="checkbox" checked> Don't auto-check when using battery</label>
+            <label class="cfg-check"><input type="checkbox" checked> Send queued mail whenever checking mail</label>
+          </div>
+          <div class="cfg-group">
+            <div class="cfg-group-title">Mail Management (POP)</div>
+            <div class="cfg-row">
+              <label class="cfg-check"><input type="checkbox" checked> Leave mail on server for</label>
+              <input class="cfg-num" type="number" value="14">
+              <span class="cfg-hint">days</span>
+            </div>
+            <label class="cfg-check"><input type="checkbox" checked> Delete from server when emptied from Trash</label>
+            <div class="cfg-row">
+              <label class="cfg-check"><input type="checkbox"> Skip messages over</label>
+              <input class="cfg-num" type="number" value="500">
+              <span class="cfg-hint">KB</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 3. SENDING MAIL -->
+        <div class="settings-panel" id="panel-sending_mail">
+          <div class="cfg-group">
+            <div class="cfg-group-title">SMTP Server</div>
+            <div class="cfg-row"><span class="cfg-lbl">Email Address:</span><input class="cfg-input" type="text" value="youness@eudora.org"></div>
+            <div class="cfg-row"><span class="cfg-lbl">SMTP Server:</span><input class="cfg-input" type="text" value="smtp.eudora.org"></div>
+            <div class="cfg-row"><span class="cfg-lbl">Default Domain:</span><input class="cfg-input" type="text" value="eudora.org"></div>
+            <label class="cfg-check"><input type="checkbox" checked> Use submission port (587)</label>
+            <label class="cfg-check"><input type="checkbox" checked> Allow authentication (SMTP AUTH)</label>
+          </div>
+          <div class="cfg-group">
+            <div class="cfg-group-title">Sending Behavior</div>
+            <label class="cfg-check"><input type="checkbox" checked> Immediate send (send messages immediately on queue)</label>
+            <label class="cfg-check"><input type="checkbox" checked> Send on check</label>
+            <label class="cfg-check"><input type="checkbox" checked> Fix curly quotes</label>
+            <label class="cfg-check"><input type="checkbox" checked> Keep copies of outgoing mail</label>
+            <label class="cfg-check"><input type="checkbox"> Automatically FCC to original mailbox</label>
+          </div>
+        </div>
+
+        <!-- 4. COMPOSING -->
+        <div class="settings-panel" id="panel-composing">
+          <div class="cfg-group">
+            <div class="cfg-group-title">Addressing</div>
+            <label class="cfg-check"><input type="checkbox" checked> Automatically complete nicknames from Address Book</label>
+            <label class="cfg-check"><input type="checkbox"> Expand nicknames immediately</label>
+          </div>
+          <div class="cfg-group">
+            <div class="cfg-group-title">Message Format</div>
+            <div class="cfg-row">
+              <label class="cfg-check"><input type="checkbox" checked> Word wrap at column:</label>
+              <input class="cfg-num" type="number" value="76">
+            </div>
+            <label class="cfg-check"><input type="checkbox" checked> May use Quoted-Printable encoding</label>
+            <label class="cfg-check"><input type="checkbox" checked> Keep copies of outgoing mail in Out mailbox</label>
+          </div>
+        </div>
+
+        <!-- 5. MAILBOX DISPLAY -->
+        <div class="settings-panel" id="panel-mailbox_display">
+          <div class="cfg-group">
+            <div class="cfg-group-title">Columns to Show</div>
+            <div class="cfg-grid-2">
+              <label class="cfg-check"><input type="checkbox" checked> Status</label>
+              <label class="cfg-check"><input type="checkbox" checked> Priority</label>
+              <label class="cfg-check"><input type="checkbox" checked> Attachments</label>
+              <label class="cfg-check"><input type="checkbox" checked> Label</label>
+              <label class="cfg-check"><input type="checkbox" checked> Who (From/To)</label>
+              <label class="cfg-check"><input type="checkbox" checked> Date</label>
+              <label class="cfg-check"><input type="checkbox" checked> Size</label>
+              <label class="cfg-check"><input type="checkbox"> Server Status</label>
+              <label class="cfg-check"><input type="checkbox" checked> MoodWatch (🌶)</label>
+              <label class="cfg-check"><input type="checkbox" checked> Junk Score</label>
+            </div>
+          </div>
+          <div class="cfg-group">
+            <div class="cfg-group-title">Table Lines &amp; Preview Pane</div>
+            <label class="cfg-check"><input type="checkbox" checked> Draw horizontal separator lines</label>
+            <label class="cfg-check"><input type="checkbox" checked> Draw vertical separator lines</label>
+            <label class="cfg-check"><input type="checkbox" checked> Show selected message count in header</label>
+            <label class="cfg-check"><input type="checkbox" checked> Show message preview pane in mailbox windows</label>
+          </div>
+          <div class="cfg-group">
+            <div class="cfg-group-title">Mark as Read</div>
+            <div class="cfg-row">
+              <span class="cfg-lbl">Mark read after previewing:</span>
+              <input class="cfg-num" type="number" value="2">
+              <span class="cfg-hint">seconds</span>
+            </div>
+            <label class="cfg-check"><input type="checkbox"> Mark read when scrolling past</label>
+            <label class="cfg-check"><input type="checkbox" checked> Mark read on delete</label>
+          </div>
+        </div>
+
+        <!-- 6. DATE DISPLAY -->
+        <div class="settings-panel" id="panel-date_display">
+          <div class="cfg-group">
+            <div class="cfg-group-title">Date Format</div>
+            <label class="cfg-check"><input type="checkbox" checked> Age-sensitive date display (e.g. "Today 09:42", "Mon 14:21")</label>
+            <label class="cfg-check"><input type="checkbox" checked> Show dates in local timezone instead of sender's timezone</label>
+            <div class="cfg-row">
+              <span class="cfg-lbl">Fixed Date Format:</span>
+              <select class="cfg-select">
+                <option selected>%b %d, %Y %H:%M</option>
+                <option>%Y-%m-%d %H:%M</option>
+                <option>%d/%m/%Y %H:%M</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- 7. STYLED TEXT -->
+        <div class="settings-panel" id="panel-styled_text">
+          <div class="cfg-group">
+            <div class="cfg-group-title">When Sending Styled Text</div>
+            <div class="cfg-radio-group">
+              <label class="cfg-radio"><input type="radio" name="styled_send" checked> Send both plain and styled</label>
+              <label class="cfg-radio"><input type="radio" name="styled_send"> Send styled only</label>
+              <label class="cfg-radio"><input type="radio" name="styled_send"> Send plain only</label>
+              <label class="cfg-radio"><input type="radio" name="styled_send"> Ask each time</label>
+            </div>
+          </div>
+          <div class="cfg-group">
+            <div class="cfg-group-title">Recognize Styles</div>
+            <div class="cfg-grid-3">
+              <label class="cfg-check"><input type="checkbox" checked> Bold</label>
+              <label class="cfg-check"><input type="checkbox" checked> Italic</label>
+              <label class="cfg-check"><input type="checkbox" checked> Underline</label>
+              <label class="cfg-check"><input type="checkbox" checked> Color</label>
+              <label class="cfg-check"><input type="checkbox" checked> Size</label>
+              <label class="cfg-check"><input type="checkbox" checked> Font</label>
+              <label class="cfg-check"><input type="checkbox" checked> Margins &amp; Excerpts</label>
+            </div>
+            <label class="cfg-check"><input type="checkbox" checked> Show formatting toolbar in compose windows</label>
+          </div>
+        </div>
+
+        <!-- 8. FONTS & DISPLAY -->
+        <div class="settings-panel" id="panel-fonts">
+          <div class="cfg-group">
+            <div class="cfg-group-title">Display Fonts</div>
+            <div class="cfg-row">
+              <span class="cfg-lbl">Screen Font:</span>
+              <select class="cfg-select"><option selected>SF Pro / Segoe UI</option><option>Helvetica Neue</option><option>Geneva</option></select>
+              <span class="cfg-hint">Size:</span>
+              <input class="cfg-num" type="number" value="13">
+            </div>
+            <div class="cfg-row">
+              <span class="cfg-lbl">Fixed-Width Font:</span>
+              <select class="cfg-select"><option selected>SF Mono / Menlo</option><option>Courier New</option><option>Monaco</option></select>
+              <span class="cfg-hint">Size:</span>
+              <input class="cfg-num" type="number" value="12">
+            </div>
+          </div>
+          <div class="cfg-group">
+            <div class="cfg-group-title">Print Font</div>
+            <div class="cfg-row">
+              <span class="cfg-lbl">Print Font:</span>
+              <select class="cfg-select"><option selected>Times New Roman</option><option>Georgia</option><option>Garamond</option></select>
+              <span class="cfg-hint">Size:</span>
+              <input class="cfg-num" type="number" value="11">
+            </div>
+          </div>
+          <div class="cfg-group">
+            <div class="cfg-group-title">Display Options</div>
+            <label class="cfg-check"><input type="checkbox" checked> Display inline graphics in messages</label>
+            <label class="cfg-check"><input type="checkbox" checked> Display emoticons as graphical smileys</label>
+            <label class="cfg-check"><input type="checkbox" checked> Zoom message preview to fit window width</label>
+          </div>
+        </div>
+
+        <!-- 9. LABELS -->
+        <div class="settings-panel" id="panel-labels">
+          <div class="cfg-group">
+            <div class="cfg-group-title">Message Labels (Colors &amp; Names)</div>
+            <div class="cfg-row"><span class="cfg-lbl">Label 1:</span><span class="swatch" style="background:#dc2626"></span><input class="cfg-input" type="text" value="Important / Urgent"></div>
+            <div class="cfg-row"><span class="cfg-lbl">Label 2:</span><span class="swatch" style="background:#ea580c"></span><input class="cfg-input" type="text" value="Work / Project"></div>
+            <div class="cfg-row"><span class="cfg-lbl">Label 3:</span><span class="swatch" style="background:#16a34a"></span><input class="cfg-input" type="text" value="Personal"></div>
+            <div class="cfg-row"><span class="cfg-lbl">Label 4:</span><span class="swatch" style="background:#2563eb"></span><input class="cfg-input" type="text" value="To Do / Follow-up"></div>
+            <div class="cfg-row"><span class="cfg-lbl">Label 5:</span><span class="swatch" style="background:#9333ea"></span><input class="cfg-input" type="text" value="Later"></div>
+            <div class="cfg-row"><span class="cfg-lbl">Label 6:</span><span class="swatch" style="background:#0891b2"></span><input class="cfg-input" type="text" value="Reference"></div>
+            <div class="cfg-row"><span class="cfg-lbl">Label 7:</span><span class="swatch" style="background:#ca8a04"></span><input class="cfg-input" type="text" value="Receipts &amp; Billing"></div>
+          </div>
+        </div>
+
+        <!-- 10. ATTACHMENTS -->
+        <div class="settings-panel" id="panel-attachments">
+          <div class="cfg-group">
+            <div class="cfg-group-title">Attachment Encoding</div>
+            <div class="cfg-radio-group">
+              <label class="cfg-radio"><input type="radio" name="att_enc" checked> MIME ( AppleDouble / Base64 )</label>
+              <label class="cfg-radio"><input type="radio" name="att_enc"> BinHex</label>
+              <label class="cfg-radio"><input type="radio" name="att_enc"> UUencode</label>
+            </div>
+          </div>
+          <div class="cfg-group">
+            <div class="cfg-group-title">Storage</div>
+            <div class="cfg-row"><span class="cfg-lbl">Attachment Folder:</span><input class="cfg-input" type="text" value="~/Downloads/Eudora Attachments"></div>
+            <label class="cfg-check"><input type="checkbox" checked> Save attachments to disk automatically on receive</label>
+            <label class="cfg-check"><input type="checkbox"> Move attachments to Trash when message is deleted</label>
+            <label class="cfg-check"><input type="checkbox" checked> Receive MIME digests as attachment mailboxes</label>
+          </div>
+        </div>
+
+        <!-- 11. REPLYING -->
+        <div class="settings-panel" id="panel-replying">
+          <div class="cfg-group">
+            <div class="cfg-group-title">Reply Options</div>
+            <label class="cfg-check"><input type="checkbox"> Reply to all by default (swap Reply and Reply All shortcuts)</label>
+            <label class="cfg-check"><input type="checkbox"> Include yourself when replying to all</label>
+            <label class="cfg-check"><input type="checkbox" checked> Put original To: recipients in Cc: field when replying to all</label>
+            <label class="cfg-check"><input type="checkbox" checked> Copy original message's priority when replying</label>
+          </div>
+        </div>
+
+        <!-- 12. JUNK MAIL -->
+        <div class="settings-panel" id="panel-junk_mail">
+          <div class="cfg-group">
+            <div class="cfg-group-title">SpamWatch Scoring</div>
+            <div class="cfg-row">
+              <span class="cfg-lbl">Consider message junk if score ≥</span>
+              <input class="cfg-num" type="number" value="50">
+              <span class="cfg-hint">(0 – 100)</span>
+            </div>
+            <label class="cfg-check"><input type="checkbox" checked> Never mark messages from Address Book senders as junk</label>
+          </div>
+          <div class="cfg-group">
+            <div class="cfg-group-title">Junk Handling</div>
+            <label class="cfg-check"><input type="checkbox" checked> Hold junk in Junk mailbox</label>
+            <label class="cfg-check"><input type="checkbox" checked> Never mark junk mail as unread</label>
+            <div class="cfg-row">
+              <label class="cfg-check"><input type="checkbox" checked> Automatically trim junk older than</label>
+              <input class="cfg-num" type="number" value="30">
+              <span class="cfg-hint">days</span>
+            </div>
+            <label class="cfg-check"><input type="checkbox" checked> Warn before deleting trimmed junk mail</label>
+          </div>
+        </div>
+
+        <!-- 13. TOOLBAR -->
+        <div class="settings-panel" id="panel-toolbar">
+          <div class="cfg-group">
+            <div class="cfg-group-title">Main Toolbar Appearance</div>
+            <label class="cfg-check"><input type="checkbox" checked> Show main toolbar</label>
+            <label class="cfg-check"><input type="checkbox" checked> Show floating search bar in toolbar</label>
+            <div class="cfg-row">
+              <span class="cfg-lbl">Button Display Style:</span>
+              <select class="cfg-select">
+                <option selected>Small icons with names</option>
+                <option>Large icons with names</option>
+                <option>Large icons only</option>
+                <option>Small icons only</option>
+                <option>Names only</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- 14. GETTING ATTENTION -->
+        <div class="settings-panel" id="panel-getting_attention">
+          <div class="cfg-group">
+            <div class="cfg-group-title">New Mail Alerts</div>
+            <label class="cfg-check"><input type="checkbox"> Put up an alert dialog when new mail arrives</label>
+            <label class="cfg-check"><input type="checkbox" checked> Bounce icon in Dock / Flash taskbar</label>
+            <label class="cfg-check"><input type="checkbox" checked> Open In mailbox when new mail arrives</label>
+            <label class="cfg-check"><input type="checkbox" checked> Play classic Eudora new mail fanfare sound</label>
+            <div class="cfg-row"><span class="cfg-lbl">Custom Sound File:</span><input class="cfg-input" type="text" value="EudoraNewMail.wav"></div>
+          </div>
+          <div class="cfg-group">
+            <div class="cfg-group-title">Task Progress</div>
+            <label class="cfg-check"><input type="checkbox" checked> Show background network task progress in status bar</label>
+          </div>
+        </div>
+
+        <!-- 15. HOSTS & PROXIES -->
+        <div class="settings-panel" id="panel-hosts">
+          <div class="cfg-group">
+            <div class="cfg-group-title">Directory Services</div>
+            <div class="cfg-row"><span class="cfg-lbl">Ph / LDAP Server:</span><input class="cfg-input" type="text" value="ns.eudora.org"></div>
+            <div class="cfg-row"><span class="cfg-lbl">Finger Server:</span><input class="cfg-input" type="text" value="finger.eudora.org"></div>
+          </div>
+          <div class="cfg-group">
+            <div class="cfg-group-title">Proxy Configuration</div>
+            <div class="cfg-row">
+              <span class="cfg-lbl">Proxy Type:</span>
+              <select class="cfg-select"><option selected>None</option><option>HTTP CONNECT</option><option>SOCKS5</option></select>
+            </div>
+            <div class="cfg-row"><span class="cfg-lbl">Proxy Host:</span><input class="cfg-input" type="text" value=""><span class="cfg-hint">Port:</span><input class="cfg-num" type="number" value="8080"></div>
+          </div>
+          <div class="cfg-group">
+            <div class="cfg-group-title">Network Behavior</div>
+            <label class="cfg-check"><input type="checkbox" checked> Balance load across multiple DNS A records</label>
+            <label class="cfg-check"><input type="checkbox"> Start Eudora in offline mode</label>
+          </div>
+        </div>
+
+        <!-- 16. MOVING AROUND -->
+        <div class="settings-panel" id="panel-moving_around">
+          <div class="cfg-group">
+            <div class="cfg-group-title">After Deleting or Transferring Current Message</div>
+            <div class="cfg-row">
+              <span class="cfg-lbl">Move selection to:</span>
+              <select class="cfg-select">
+                <option>Do nothing</option>
+                <option selected>Open next message</option>
+                <option>Open next unread message</option>
+                <option>Open next message if unread exists</option>
+                <option>Open next message with same subject</option>
+              </select>
+            </div>
+          </div>
+          <div class="cfg-group">
+            <div class="cfg-group-title">Keyboard Navigation</div>
+            <label class="cfg-check"><input type="checkbox" checked> Tab key switches between message header fields</label>
+            <label class="cfg-check"><input type="checkbox" checked> Return key switches between composition header fields</label>
+          </div>
+        </div>
+
+        <!-- 17. EXTRA WARNINGS -->
+        <div class="settings-panel" id="panel-extra_warnings">
+          <div class="cfg-group">
+            <div class="cfg-group-title">Delete Warnings</div>
+            <label class="cfg-check"><input type="checkbox" checked> Warn when deleting unread messages</label>
+            <label class="cfg-check"><input type="checkbox" checked> Warn when deleting queued messages</label>
+            <label class="cfg-check"><input type="checkbox" checked> Warn when deleting unsent messages</label>
+          </div>
+          <div class="cfg-group">
+            <div class="cfg-group-title">Send &amp; Queue Warnings</div>
+            <label class="cfg-check"><input type="checkbox" checked> Warn when queueing a message with no Subject</label>
+            <label class="cfg-check"><input type="checkbox"> Warn when queueing styled text</label>
+            <div class="cfg-row">
+              <label class="cfg-check"><input type="checkbox" checked> Warn when sending message larger than</label>
+              <input class="cfg-num" type="number" value="1024">
+              <span class="cfg-hint">KB</span>
+            </div>
+          </div>
+          <div class="cfg-group">
+            <div class="cfg-group-title">Quit Warnings</div>
+            <label class="cfg-check"><input type="checkbox" checked> Warn when quitting with messages queued to be sent</label>
+            <label class="cfg-check"><input type="checkbox" checked> Warn before emptying Trash</label>
+          </div>
+        </div>
+
+        <!-- 18. MISCELLANEOUS -->
+        <div class="settings-panel" id="panel-miscellaneous">
+          <div class="cfg-group">
+            <div class="cfg-group-title">General Behavior</div>
+            <label class="cfg-check"><input type="checkbox" checked> Close open message windows when closing mailbox</label>
+            <label class="cfg-check"><input type="checkbox"> Empty Trash when quitting Eudora</label>
+            <label class="cfg-check"><input type="checkbox" checked> Turbo Redirect (queue redirect and delete original in one step)</label>
+            <label class="cfg-check"><input type="checkbox"> Resort mailboxes less often</label>
+          </div>
+          <div class="cfg-group">
+            <div class="cfg-group-title">Advanced</div>
+            <label class="cfg-check"><input type="checkbox"> Use classic `.toc` binary table-of-contents format</label>
+            <label class="cfg-check"><input type="checkbox" checked> Generate Filter Report when filters move messages</label>
+            <label class="cfg-check"><input type="checkbox" checked> Store account passwords in system keychain</label>
+          </div>
+        </div>
+
+        <!-- 19. ACCOUNTS & PERSONALITIES -->
+        <div class="settings-panel" id="panel-accounts">
+          <div class="cfg-group">
+            <div class="cfg-group-title">Dominant Personality</div>
+            <div class="cfg-row"><span class="cfg-lbl">Personality Name:</span><input class="cfg-input" type="text" value="Dominant"></div>
+            <div class="cfg-row"><span class="cfg-lbl">Real Name:</span><input class="cfg-input" type="text" value="Youness El Andaloussi"></div>
+            <div class="cfg-row"><span class="cfg-lbl">Return Address:</span><input class="cfg-input" type="text" value="youness@eudora.org"></div>
+            <div class="cfg-row"><span class="cfg-lbl">Incoming Server:</span><input class="cfg-input" type="text" value="mail.eudora.org"></div>
+            <div class="cfg-row"><span class="cfg-lbl">SMTP Server:</span><input class="cfg-input" type="text" value="smtp.eudora.org"></div>
+          </div>
+          <div class="cfg-group">
+            <div class="cfg-group-title">Additional Personalities</div>
+            <div class="cfg-hint">Work (youness@webcore.dev) · Open Source (youness@rust-lang.org)</div>
+          </div>
+        </div>
+
+        <!-- 20. SSL / TLS -->
+        <div class="settings-panel" id="panel-ssl">
+          <div class="cfg-group">
+            <div class="cfg-group-title">TLS / SSL Security Mode</div>
+            <div class="cfg-row">
+              <span class="cfg-lbl">SSL when Receiving (POP):</span>
+              <select class="cfg-select">
+                <option>Never</option>
+                <option>If Available, STARTTLS</option>
+                <option selected>Required, Alternate Port (995)</option>
+              </select>
+            </div>
+            <div class="cfg-row">
+              <span class="cfg-lbl">SSL when Sending (SMTP):</span>
+              <select class="cfg-select">
+                <option>Never</option>
+                <option selected>Required, STARTTLS (587)</option>
+                <option>Required, Alternate Port (465)</option>
+              </select>
+            </div>
+            <div class="cfg-row">
+              <span class="cfg-lbl">SSL for IMAP:</span>
+              <select class="cfg-select">
+                <option>Never</option>
+                <option>If Available, STARTTLS</option>
+                <option selected>Required, Alternate Port (993)</option>
+              </select>
+            </div>
+            <label class="cfg-check"><input type="checkbox" checked> Verify server TLS certificates against system root store</label>
+          </div>
+        </div>
+
+        <!-- 21. SPELL CHECKING -->
+        <div class="settings-panel" id="panel-spell_checking">
+          <div class="cfg-group">
+            <div class="cfg-group-title">Automatic Spell Checking</div>
+            <label class="cfg-check"><input type="checkbox" checked> Check spelling automatically as you type</label>
+            <label class="cfg-check"><input type="checkbox" checked> Warn about misspellings before queueing or sending</label>
+          </div>
+          <div class="cfg-group">
+            <div class="cfg-group-title">Ignore Words</div>
+            <label class="cfg-check"><input type="checkbox"> Ignore words starting with a capital letter</label>
+            <label class="cfg-check"><input type="checkbox" checked> Ignore words with mixed capitalization (e.g. WebCore)</label>
+            <label class="cfg-check"><input type="checkbox" checked> Ignore words containing numbers</label>
+            <label class="cfg-check"><input type="checkbox" checked> Ignore ALL CAPS acronyms</label>
+          </div>
+          <div class="cfg-group">
+            <div class="cfg-group-title">Suggestions</div>
+            <div class="cfg-row">
+              <span class="cfg-lbl">Suggest words by:</span>
+              <select class="cfg-select">
+                <option>Looks like (typographical)</option>
+                <option>Sounds like (phonetic)</option>
+                <option selected>Both typographical and phonetic</option>
+                <option>Never suggest</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- FOOTER -->
+      <div class="settings-footer">
+        <div class="footer-status" id="settings-status-msg">Ready — All 21 classic Eudora configuration panels loaded.</div>
+        <div class="footer-actions">
+          <button class="btn-act" data-action="reset-settings">Reset Category</button>
+          <button class="btn-act" data-action="close-settings">Cancel</button>
+          <button class="btn-act primary" data-action="save-settings">OK — Save Settings</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- STATUS BAR -->
+  <div class="statusbar">
+    <span><span class="sb-dot"></span>Connected · mail.eudora.org</span>
+    <span>Eudora Settings &amp; Configuration</span>
+    <div class="sb-right">
+      <span>21 Categories</span>
+      <span>SSL/TLS Active</span>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>
