@@ -1,3 +1,4 @@
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use webcore::browser::{Browser, BrowserChrome, BrowserDocument, BrowserGuest, BrowserOptions};
@@ -33,8 +34,8 @@ enum EmailViewMode {
 
 #[derive(Clone, Debug)]
 struct Mailbox {
-    name: &'static str,
-    email_label: &'static str,
+    name: String,
+    email_label: String,
     icon: &'static str,
     indent: u8,
     has_children: bool,
@@ -76,21 +77,21 @@ struct MailMessage {
 
 #[derive(Clone, Debug)]
 struct Contact {
-    name: &'static str,
-    initials: &'static str,
-    email: &'static str,
-    phone: &'static str,
-    company: &'static str,
-    title: &'static str,
-    notes: &'static str,
+    name: String,
+    initials: String,
+    email: String,
+    phone: String,
+    company: String,
+    title: String,
+    notes: String,
     color: &'static str,
 }
 
 #[derive(Clone, Debug)]
 struct MailFilter {
-    name: &'static str,
-    condition: &'static str,
-    action: &'static str,
+    name: String,
+    condition: String,
+    action: String,
     enabled: bool,
 }
 
@@ -129,6 +130,8 @@ struct AppState {
     pending_skin: Option<Skin>,
     dirty: bool,
     dark_mode: bool,
+    data_dir: PathBuf,
+    conf: macmbx::conf::Conf,
     mailboxes: Vec<Mailbox>,
     labels: Vec<LabelDef>,
     messages: Vec<MailMessage>,
@@ -152,25 +155,549 @@ struct AppState {
     status_right: String,
 }
 
+const AVATAR_COLORS: &[&str] = &[
+    "#326ea5", "#2ea043", "#9b32a5", "#d29922", "#d2372d", "#32a582", "#6450b4", "#0078d4",
+];
+
+fn compute_avatar_color(name: &str) -> &'static str {
+    let mut sum: usize = 0;
+    for b in name.bytes() {
+        sum = sum.wrapping_add(b as usize);
+    }
+    AVATAR_COLORS[sum % AVATAR_COLORS.len()]
+}
+
+fn compute_initials(name: &str) -> String {
+    let clean = name.trim();
+    let name_part = if let Some(idx) = clean.find('<') {
+        clean[..idx].trim()
+    } else {
+        clean
+    };
+    let parts: Vec<&str> = name_part.split_whitespace().collect();
+    if parts.is_empty() {
+        return "?".to_string();
+    }
+    if parts.len() == 1 {
+        return parts[0].chars().take(2).collect::<String>().to_uppercase();
+    }
+    let first = parts[0].chars().next().unwrap_or('?');
+    let last = parts[parts.len() - 1].chars().next().unwrap_or('?');
+    format!("{}{}", first, last).to_uppercase()
+}
+
+fn mb_name_hash(s: &str) -> usize {
+    let mut h: usize = 0;
+    for b in s.bytes() {
+        h = h.wrapping_mul(31).wrapping_add(b as usize);
+    }
+    h % 1000
+}
+
+fn resolve_data_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var("GEUDORA_DIR") {
+        return PathBuf::from(dir);
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        let p = PathBuf::from(home).join(".local/share/geudora");
+        if std::fs::create_dir_all(&p).is_ok() {
+            return p;
+        }
+    }
+    let local = PathBuf::from(".geudora");
+    let _ = std::fs::create_dir_all(&local);
+    local
+}
+
+const SEED_IN_1: &[u8] = b"From: Steve Dorner <sdorner@qualcomm.com>\r\n\
+To: you@example.com\r\n\
+Cc: eudora-team@qualcomm.com\r\n\
+Subject: Welcome to Eudora 2026!\r\n\
+Date: Sat, 7 Mar 2026 09:15:00 -0800\r\n\
+Content-Type: text/html; charset=utf-8\r\n\
+\r\n\
+<h3 style=\"color:#326ea5;margin-top:0\">Welcome to the all-new Eudora!</h3>\r\n\
+<p>We've rebuilt the classic email client you loved from the ground up, powered by a modern HTML/CSS rendering engine.</p>\r\n\
+<p><b>What's new in Eudora 2026:</b></p>\r\n\
+<ul>\r\n\
+  <li><b>Rich HTML Email</b> \xE2\x80\x94 Full CSS styling, tables, and embedded images</li>\r\n\
+  <li><b>Wazoo Panels</b> \xE2\x80\x94 Dockable tabbed mailbox &amp; tool panels</li>\r\n\
+  <li><b>Lightning Filter Engine</b> \xE2\x80\x94 100x faster rule processing</li>\r\n\
+  <li><b>Address Book</b> \xE2\x80\x94 Integrated contact management with quick-search</li>\r\n\
+  <li><b>Dark Mode</b> \xE2\x80\x94 Easy on the eyes for late-night email sessions</li>\r\n\
+</ul>\r\n\
+<p>As I always said: <i>\"Bringing Mail to the Masses.\"</i></p>\r\n\
+<p>Best regards,<br><b>Steve Dorner</b><br><span style=\"font-size:9pt;opacity:0.6\">Creator of Eudora \xE2\x80\xA2 Qualcomm Inc.</span></p>\r\n";
+
+const SEED_IN_2: &[u8] = b"From: Alan Strider <astrider@example.com>\r\n\
+To: you@example.com\r\n\
+Cc: finance@example.com\r\n\
+Subject: Q1 Financial Report - Action Required\r\n\
+Date: Sat, 7 Mar 2026 08:42:00 -0800\r\n\
+Content-Type: text/html; charset=utf-8\r\n\
+\r\n\
+<p>Hi team,</p>\r\n\
+<p>Attached is the updated <b>Q1 Financial Summary</b> for your review.</p>\r\n\
+<table border=\"1\" cellpadding=\"4\" style=\"border-collapse:collapse;margin:10px 0;width:100%\">\r\n\
+  <tr style=\"background:#326ea5;color:white\"><th>Category</th><th>Budget</th><th>Actual</th><th>Variance</th></tr>\r\n\
+  <tr><td>R&amp;D</td><td>$120,000</td><td>$114,200</td><td style=\"color:green\">-$5,800</td></tr>\r\n\
+  <tr><td>Infrastructure</td><td>$45,000</td><td>$48,100</td><td style=\"color:red\">+$3,100</td></tr>\r\n\
+  <tr><td>Marketing</td><td>$30,000</td><td>$27,500</td><td style=\"color:green\">-$2,500</td></tr>\r\n\
+</table>\r\n\
+<p>Please review lines 14-28 by end of day Friday.</p>\r\n\
+<p>Thanks,<br><b>Alan Strider</b><br>Finance Director</p>\r\n";
+
+const SEED_IN_3: &[u8] = b"From: GitHub Notifications <notifications@github.com>\r\n\
+To: you@example.com\r\n\
+Subject: [eudora-rs] Pull Request #142: Add Wazoo tabs\r\n\
+Date: Fri, 6 Mar 2026 14:15:00 -0800\r\n\
+Content-Type: text/html; charset=utf-8\r\n\
+\r\n\
+<p><b>@sdorner</b> requested your review on <a href=\"#\">#142 Add dockable Wazoo tabs</a></p>\r\n\
+<p>Features added:</p>\r\n\
+<ul>\r\n\
+  <li>Tab bar drag-to-dock</li>\r\n\
+  <li>Persisted tab layout to config</li>\r\n\
+  <li>Auto-placement algorithm</li>\r\n\
+</ul>\r\n\
+<p style=\"font-size:9pt;color:#666;\">\xE2\x80\x94<br>View it on GitHub or unsubscribe.</p>\r\n";
+
+const SEED_IN_4: &[u8] = b"From: Dana Park <dpark@example.com>\r\n\
+To: you@example.com\r\n\
+Cc: speakers@conf2026.example\r\n\
+Subject: Conference talk proposal accepted!\r\n\
+Date: Thu, 5 Mar 2026 11:20:00 -0800\r\n\
+Content-Type: text/html; charset=utf-8\r\n\
+\r\n\
+<p>Great news!</p>\r\n\
+<p>Our talk <b>\"Rendering HTML Email in 2026: Lessons from Eudora\"</b> was accepted for the main track!</p>\r\n\
+<p>Slot: <b>April 18, 2:00 PM \xE2\x80\x94 Hall B</b></p>\r\n\
+<p>Let's sync this week to outline the slides.</p>\r\n\
+<p>\xE2\x80\x94 Dana</p>\r\n";
+
+const SEED_IN_5: &[u8] = b"From: Rust Weekly <newsletter@rustweekly.example>\r\n\
+To: subscribers@rustweekly.example\r\n\
+Subject: This Week in Rust #642\r\n\
+Date: Wed, 4 Mar 2026 07:00:00 -0800\r\n\
+Content-Type: text/html; charset=utf-8\r\n\
+\r\n\
+<h3>This Week in Rust #642</h3>\r\n\
+<p>Hello and welcome to another issue of <i>This Week in Rust</i>!</p>\r\n\
+<ul>\r\n\
+  <li><b>Official:</b> Rust 1.86.0 release notes</li>\r\n\
+  <li><b>Project/Tooling:</b> Fast HTML/CSS layout engines in pure Rust</li>\r\n\
+  <li><b>Crate of the Week:</b> <code>webcore</code> \xE2\x80\x94 lightweight embeddable browser engine</li>\r\n\
+</ul>\r\n";
+
+const SEED_IN_6: &[u8] = b"From: Rick Langley <rick@example.com>\r\n\
+To: you@example.com\r\n\
+Subject: Lunch Friday?\r\n\
+Date: Mon, 2 Mar 2026 13:12:00 -0800\r\n\
+Content-Type: text/html; charset=utf-8\r\n\
+\r\n\
+<p>Hey, want to grab lunch Friday? Thinking that new ramen place on 5th.</p>\r\n\
+<p>Let me know!</p><p>Rick</p>\r\n";
+
+const SEED_IN_7: &[u8] = b"From: Bob Chen <bchen@example.com>\r\n\
+To: you@example.com\r\n\
+Subject: Production deployment checklist\r\n\
+Date: Wed, 4 Mar 2026 17:10:00 -0800\r\n\
+Content-Type: text/html; charset=utf-8\r\n\
+\r\n\
+<p>Hi,</p><p>All staging checks passed. Ready for the rollout window tonight at 19:00 UTC.</p><p>\xE2\x80\x94 Bob</p>\r\n";
+
+const SEED_OUT_1: &[u8] = b"From: you@example.com\r\n\
+To: Steve Dorner <sdorner@qualcomm.com>\r\n\
+Subject: Re: Welcome to Eudora 2026!\r\n\
+Date: Sat, 7 Mar 2026 10:45:00 -0800\r\n\
+Content-Type: text/html; charset=utf-8\r\n\
+\r\n\
+<p>Thanks Steve! The new version is amazing.</p>\r\n\
+<p>Quick questions:</p>\r\n\
+<ol>\r\n\
+  <li>Can I import old mailboxes?</li>\r\n\
+  <li>CalDAV support?</li>\r\n\
+</ol>\r\n";
+
+const SEED_OUT_2: &[u8] = b"From: you@example.com\r\n\
+To: team@example.com\r\n\
+Cc: astrider@example.com\r\n\
+Subject: Dashboard redesign - timeline update\r\n\
+Date: Fri, 6 Mar 2026 15:00:00 -0800\r\n\
+Content-Type: text/html; charset=utf-8\r\n\
+\r\n\
+<p>Hi team,</p>\r\n\
+<p>Running behind on the dashboard redesign. Pushing milestone to next Friday.</p>\r\n";
+
+const SEED_OUT_3: &[u8] = b"From: you@example.com\r\n\
+To: Dana Park <dpark@example.com>\r\n\
+Subject: Re: Conference talk proposal\r\n\
+Date: Thu, 5 Mar 2026 14:15:00 -0800\r\n\
+Content-Type: text/html; charset=utf-8\r\n\
+\r\n\
+<p>Fantastic news, Dana!</p>\r\n\
+<p>Outline ideas:</p>\r\n\
+<ol>\r\n\
+  <li>History of desktop email clients</li>\r\n\
+  <li>Modern rendering challenges</li>\r\n\
+  <li>Live demo</li>\r\n\
+</ol>\r\n";
+
+const SEED_DRAFTS_1: &[u8] = b"From: you@example.com\r\n\
+To: jbeckley@qualcomm.com\r\n\
+Subject: [Draft] Toolbar icon measurements\r\n\
+Date: Sat, 7 Mar 2026 11:00:00 -0800\r\n\
+Content-Type: text/html; charset=utf-8\r\n\
+\r\n\
+<p>Hi Jeff,</p><p>Here are the updated measurements for the Wazoo sidebar and toolbar buttons.</p>\r\n";
+
+const SEED_TRASH_1: &[u8] = b"From: Prize Desk <winner@lottery-example.org>\r\n\
+To: you@example.com\r\n\
+Subject: CONGRATULATIONS! You won a free cruise!\r\n\
+Date: Tue, 3 Mar 2026 03:11:00 -0800\r\n\
+Content-Type: text/html; charset=utf-8\r\n\
+\r\n\
+<p><b>Filtered by Eudora Spam Keywords Rule.</b></p><p>Click here immediately to claim your luxury Bahamas cruise reward.</p>\r\n";
+
+fn default_seed_filters() -> Vec<MailFilter> {
+    vec![
+        MailFilter { name: "Mailing Lists".to_string(),  condition: "To contains @list.example".to_string(),          action: "Move to Mailing Lists".to_string(),    enabled: true  },
+        MailFilter { name: "Newsletters".to_string(),    condition: "From contains newsletter".to_string(),            action: "Move to Newsletters".to_string(),      enabled: true  },
+        MailFilter { name: "Spam Keywords".to_string(),  condition: "Subject contains winner|lottery".to_string(),     action: "Move to Junk".to_string(),             enabled: true  },
+        MailFilter { name: "Work Priority".to_string(),  condition: "From contains @qualcomm.com".to_string(),         action: "Set Priority: High, Flag".to_string(), enabled: true  },
+        MailFilter { name: "Large Attach".to_string(),   condition: "Attachment Size > 5MB".to_string(),               action: "Add Label: Large".to_string(),         enabled: false },
+        MailFilter { name: "Auto-Reply OOO".to_string(), condition: "Subject is Out of Office".to_string(),            action: "Skip Inbox, Auto-Reply".to_string(),   enabled: true  },
+        MailFilter { name: "Conference".to_string(),     condition: "Subject contains conference|summit".to_string(),  action: "Move to Work/Projects".to_string(),    enabled: false },
+    ]
+}
+
+fn seed_store_if_needed(data_dir: &Path) {
+    let mailboxes_dir = data_dir.join("mailboxes");
+    let nick_dir = data_dir.join("Nicknames");
+    let _ = std::fs::create_dir_all(&mailboxes_dir);
+    let _ = std::fs::create_dir_all(&nick_dir);
+
+    let in_path = mailboxes_dir.join("In");
+    let needs_seed = !in_path.exists() || std::fs::metadata(&in_path).map(|m| m.len() == 0).unwrap_or(true);
+
+    if needs_seed {
+        // Seed In
+        if let Ok(mut in_toc) = macmbx::toc::Toc::open_or_create(&in_path) {
+            let _ = macmbx::ops::append_message(&mut in_toc, SEED_IN_1, "sdorner@qualcomm.com", macmbx::toc::State::Unread, 1);
+            let _ = macmbx::ops::set_flags(&mut in_toc, 0, macmbx::toc::MsgFlags::FLAGGED);
+            let _ = macmbx::ops::set_label(&mut in_toc, 0, 1);
+
+            let _ = macmbx::ops::append_message(&mut in_toc, SEED_IN_2, "astrider@example.com", macmbx::toc::State::Unread, 2);
+            let _ = macmbx::ops::set_label(&mut in_toc, 1, 4);
+
+            let _ = macmbx::ops::append_message(&mut in_toc, SEED_IN_3, "notifications@github.com", macmbx::toc::State::Read, 3);
+            let _ = macmbx::ops::set_label(&mut in_toc, 2, 5);
+
+            let _ = macmbx::ops::append_message(&mut in_toc, SEED_IN_4, "dpark@example.com", macmbx::toc::State::Read, 3);
+            let _ = macmbx::ops::set_flags(&mut in_toc, 3, macmbx::toc::MsgFlags::FLAGGED);
+            let _ = macmbx::ops::set_label(&mut in_toc, 3, 6);
+
+            let _ = macmbx::ops::append_message(&mut in_toc, SEED_IN_5, "newsletter@rustweekly.example", macmbx::toc::State::Read, 4);
+            let _ = macmbx::ops::set_label(&mut in_toc, 4, 5);
+
+            let _ = macmbx::ops::append_message(&mut in_toc, SEED_IN_6, "rick@example.com", macmbx::toc::State::Read, 5);
+            let _ = macmbx::ops::set_label(&mut in_toc, 5, 2);
+
+            let _ = macmbx::ops::append_message(&mut in_toc, SEED_IN_7, "bchen@example.com", macmbx::toc::State::Unread, 2);
+            let _ = macmbx::ops::set_label(&mut in_toc, 6, 1);
+
+            let _ = in_toc.save();
+        }
+
+        // Seed Out
+        let out_path = mailboxes_dir.join("Out");
+        if let Ok(mut out_toc) = macmbx::toc::Toc::open_or_create(&out_path) {
+            let _ = macmbx::ops::append_message(&mut out_toc, SEED_OUT_1, "you@example.com", macmbx::toc::State::Sent, 3);
+            let _ = macmbx::ops::set_label(&mut out_toc, 0, 1);
+
+            let _ = macmbx::ops::append_message(&mut out_toc, SEED_OUT_2, "you@example.com", macmbx::toc::State::Sent, 3);
+            let _ = macmbx::ops::set_label(&mut out_toc, 1, 7);
+
+            let _ = macmbx::ops::append_message(&mut out_toc, SEED_OUT_3, "you@example.com", macmbx::toc::State::Queued, 3);
+            let _ = macmbx::ops::set_label(&mut out_toc, 2, 1);
+
+            let _ = out_toc.save();
+        }
+
+        // Seed Drafts
+        let drafts_path = mailboxes_dir.join("Drafts");
+        if let Ok(mut drafts_toc) = macmbx::toc::Toc::open_or_create(&drafts_path) {
+            let _ = macmbx::ops::append_message(&mut drafts_toc, SEED_DRAFTS_1, "you@example.com", macmbx::toc::State::Sendable, 3);
+            let _ = drafts_toc.save();
+        }
+
+        // Seed Trash
+        let trash_path = mailboxes_dir.join("Trash");
+        if let Ok(mut trash_toc) = macmbx::toc::Toc::open_or_create(&trash_path) {
+            let _ = macmbx::ops::append_message(&mut trash_toc, SEED_TRASH_1, "winner@lottery-example.org", macmbx::toc::State::Read, 4);
+            let _ = trash_toc.save();
+        }
+
+        for mb in &["Junk", "Sent", "Archive", "Work", "Personal"] {
+            let p = mailboxes_dir.join(mb);
+            if !p.exists() {
+                let _ = macmbx::toc::Toc::open_or_create(&p);
+            }
+        }
+    }
+
+    let standard_nicks = nick_dir.join("Standard.txt");
+    if !standard_nicks.exists() {
+        let content = "\
+alias \"Steve Dorner\" sdorner@qualcomm.com\n\
+note \"Steve Dorner\" <phone:(858) 555-0100><company:Qualcomm><title:Chief Architect><notes:Creator of Eudora. Prefers plain text.>\n\
+alias \"Jeff Beckley\" jbeckley@qualcomm.com\n\
+note \"Jeff Beckley\" <phone:(858) 555-0101><company:Qualcomm><title:Senior Engineer><notes:Toolbar and UI specialist.>\n\
+alias \"Alan Strider\" astrider@example.com\n\
+note \"Alan Strider\" <phone:(415) 555-0200><company:Acme Corp><title:Finance Director><notes:Sends quarterly reports.>\n\
+alias \"Dana Park\" dpark@example.com\n\
+note \"Dana Park\" <phone:(415) 555-0201><company:TechStudio><title:Design Lead><notes:Conference co-speaker.>\n\
+alias \"Rick Langley\" rick@example.com\n\
+note \"Rick Langley\" <phone:(510) 555-0300><notes:College friend. Likes ramen.>\n\
+alias \"Lisa Warren\" lwarren@design.example\n\
+note \"Lisa Warren\" <phone:(510) 555-0301><company:DesignWorks><title:UX Researcher><notes:Working on mobile nav project.>\n\
+alias \"Bob Chen\" bchen@example.com\n\
+note \"Bob Chen\" <phone:(650) 555-0400><company:CloudSoft><title:DevOps Manager><notes:Handles infrastructure.>\n\
+alias \"Maria Santos\" msantos@example.com\n\
+note \"Maria Santos\" <phone:(650) 555-0401><company:DataFlow><title:Data Scientist><notes:ML and analytics expert.>\n";
+        let _ = std::fs::write(&standard_nicks, content);
+    }
+
+    let ini_path = data_dir.join("geudora.ini");
+    if !ini_path.exists() {
+        let ini_content = "\
+[Settings]
+LoginName=you
+RealName=You
+ReturnAddress=you@example.com
+MailServer=mail.example.com
+SMTPServer=smtp.example.com
+POPAccount=you@example.com
+";
+        let _ = std::fs::write(&ini_path, ini_content);
+    }
+}
+
+fn load_macmbx_data(
+    data_dir: &Path,
+    _conf: &macmbx::conf::Conf,
+) -> (Vec<Mailbox>, Vec<MailMessage>, Vec<Contact>, Vec<MailFilter>) {
+    let mailboxes_dir = data_dir.join("mailboxes");
+
+    let mut mailboxes = vec![
+        Mailbox { name: "In".to_string(),            email_label: "Inbox".to_string(),   icon: "📥", indent: 0, has_children: false, separator_after: false, show_in_email_skin: true },
+        Mailbox { name: "Out".to_string(),           email_label: "Sent".to_string(),    icon: "📤", indent: 0, has_children: false, separator_after: false, show_in_email_skin: true },
+        Mailbox { name: "Drafts".to_string(),        email_label: "Drafts".to_string(),  icon: "📝", indent: 0, has_children: false, separator_after: false, show_in_email_skin: true },
+        Mailbox { name: "Sent".to_string(),          email_label: "Sent".to_string(),    icon: "📨", indent: 0, has_children: false, separator_after: false, show_in_email_skin: false },
+        Mailbox { name: "Archive".to_string(),       email_label: "Archive".to_string(), icon: "📦", indent: 0, has_children: false, separator_after: false, show_in_email_skin: true },
+        Mailbox { name: "Spam".to_string(),          email_label: "Spam".to_string(),    icon: "⛔", indent: 0, has_children: false, separator_after: false, show_in_email_skin: true },
+        Mailbox { name: "Trash".to_string(),         email_label: "Trash".to_string(),   icon: "🗑", indent: 0, has_children: false, separator_after: true,  show_in_email_skin: true },
+        Mailbox { name: "Work".to_string(),          email_label: "Work".to_string(),    icon: "📁", indent: 0, has_children: false, separator_after: false, show_in_email_skin: false },
+        Mailbox { name: "Personal".to_string(),      email_label: "Personal".to_string(),icon: "📁", indent: 0, has_children: false, separator_after: true,  show_in_email_skin: false },
+    ];
+
+    if let Ok(entries) = std::fs::read_dir(&mailboxes_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() && path.extension().and_then(|e| e.to_str()) != Some("toc") {
+                if let Some(file_name) = path.file_name().and_then(|f| f.to_str()) {
+                    if !mailboxes.iter().any(|m| m.name.eq_ignore_ascii_case(file_name)) {
+                        mailboxes.push(Mailbox {
+                            name: file_name.to_string(),
+                            email_label: file_name.to_string(),
+                            icon: "📂",
+                            indent: 0,
+                            has_children: false,
+                            separator_after: false,
+                            show_in_email_skin: false,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    let mut messages = Vec::new();
+    for mb in &mailboxes {
+        let mb_path = mailboxes_dir.join(&mb.name);
+        if let Ok(toc) = macmbx::toc::Toc::open_or_create(&mb_path) {
+            for (i, sum) in toc.msgs.iter().enumerate() {
+                let raw = macmbx::ops::read_message(&toc, i).unwrap_or_default();
+                let parsed = crispy::msg::parse(&raw);
+
+                let from = parsed.as_ref().and_then(|p| p.from.clone())
+                    .unwrap_or_else(|| if sum.from.is_empty() { "Unknown".to_string() } else { sum.from.clone() });
+                let to = parsed.as_ref().and_then(|p| p.to.clone()).unwrap_or_default();
+                let cc = parsed.as_ref().and_then(|p| p.cc.clone()).unwrap_or_default();
+                let subject = parsed.as_ref().and_then(|p| p.subject.clone())
+                    .unwrap_or_else(|| if sum.subject.is_empty() { "(No Subject)".to_string() } else { sum.subject.clone() });
+                let date = parsed.as_ref().and_then(|p| p.date.clone())
+                    .unwrap_or_else(|| format!("Date #{}", sum.seconds));
+
+                let body_html = if let Some(p) = &parsed {
+                    if let Some(h) = p.body_html() {
+                        h.to_string()
+                    } else if let Some(plain) = p.body_plain() {
+                        format!("<pre style=\"font-family:monospace;white-space:pre-wrap;\">{}</pre>", escape_html(plain))
+                    } else {
+                        String::new()
+                    }
+                } else {
+                    String::new()
+                };
+
+                let preview = if let Some(p) = &parsed {
+                    p.body_plain()
+                        .map(|s| s.lines().take(3).collect::<Vec<_>>().join(" "))
+                        .unwrap_or_default()
+                } else {
+                    String::new()
+                };
+
+                let unread = sum.state == macmbx::toc::State::Unread;
+                let replied = sum.state == macmbx::toc::State::Replied;
+                let forwarded = sum.state == macmbx::toc::State::Forwarded;
+                let flagged = sum.flags.contains(macmbx::toc::MsgFlags::FLAGGED);
+
+                let priority = match sum.priority {
+                    1 => "highest",
+                    2 => "high",
+                    3 => "normal",
+                    4 => "low",
+                    5 => "none",
+                    _ => "normal",
+                };
+
+                let has_attach = sum.has_attachment || parsed.as_ref().map(|p| !p.attachments().is_empty()).unwrap_or(false);
+                let attachment_note = if let Some(p) = &parsed {
+                    let atts = p.attachments();
+                    if !atts.is_empty() {
+                        format!("📎 {}", atts.iter().filter_map(|a| a.filename.as_deref()).collect::<Vec<_>>().join(", "))
+                    } else {
+                        String::new()
+                    }
+                } else {
+                    String::new()
+                };
+
+                let size = if sum.length > 1024 * 1024 {
+                    format!("{:.1}M", sum.length as f64 / (1024.0 * 1024.0))
+                } else if sum.length > 1024 {
+                    format!("{}K", sum.length / 1024)
+                } else {
+                    format!("{}B", sum.length)
+                };
+
+                let mut labels = Vec::new();
+                let lbl_idx = macmbx::ops::get_label(&toc, i);
+                match lbl_idx {
+                    1 => labels.push("Work"),
+                    2 => labels.push("Personal"),
+                    3 => labels.push("Urgent"),
+                    4 => labels.push("Finance"),
+                    5 => labels.push("Dev"),
+                    6 => labels.push("Design"),
+                    7 => labels.push("Team"),
+                    _ => {}
+                }
+
+                let avatar_initials = compute_initials(&from);
+                let avatar_color = compute_avatar_color(&from);
+                let id = (mb_name_hash(&mb.name) * 1000) + i + 1;
+
+                messages.push(MailMessage {
+                    id,
+                    mailbox: mb.name.clone(),
+                    from,
+                    to,
+                    cc,
+                    subject,
+                    date: date.clone(),
+                    short_date: date,
+                    size,
+                    preview,
+                    body_html,
+                    unread,
+                    replied,
+                    forwarded,
+                    has_attach,
+                    attachment_note,
+                    priority,
+                    flagged,
+                    avatar_initials,
+                    avatar_color,
+                    labels,
+                });
+            }
+        }
+    }
+
+    let mut contacts = Vec::new();
+    let nick_dir = data_dir.join("Nicknames");
+    if let Ok(books) = macmbx::nicknames::AddressBooks::open(&nick_dir) {
+        for book in &books.books {
+            for (ni, nick) in book.entries.iter().enumerate() {
+                if nick.deleted { continue; }
+                let name = nick.name.clone();
+                let email = nick.addresses.clone().unwrap_or_default();
+                let phone = book.get_field(ni, "phone").unwrap_or("").to_string();
+                let company = book.get_field(ni, "company").unwrap_or("").to_string();
+                let title = book.get_field(ni, "title").unwrap_or("").to_string();
+                let notes = book.get_field(ni, "notes").unwrap_or("").to_string();
+                let initials = compute_initials(&name);
+                let color = compute_avatar_color(&name);
+                contacts.push(Contact {
+                    name,
+                    initials,
+                    email,
+                    phone,
+                    company,
+                    title,
+                    notes,
+                    color,
+                });
+            }
+        }
+    }
+
+    let mut filters = Vec::new();
+    let filter_path = data_dir.join("Filters");
+    if let Ok(filter_set) = macmbx::filter::FilterSet::load(&filter_path) {
+        for rule in &filter_set.rules {
+            let condition = rule.conditions.first()
+                .map(|c| format!("{} {:?} {}", c.header, c.verb, c.value))
+                .unwrap_or_else(|| "Any message".to_string());
+            let action = rule.actions.first()
+                .map(|a| format!("{:?}", a.action_type))
+                .unwrap_or_else(|| "Transfer".to_string());
+            filters.push(MailFilter {
+                name: rule.name.clone(),
+                condition,
+                action,
+                enabled: true,
+            });
+        }
+    }
+    if filters.is_empty() {
+        filters = default_seed_filters();
+    }
+
+    (mailboxes, messages, contacts, filters)
+}
+
 impl AppState {
     fn new() -> Self {
-        let mailboxes = vec![
-            Mailbox { name: "In",            email_label: "Inbox",   icon: "📥", indent: 0, has_children: false, separator_after: false, show_in_email_skin: true },
-            Mailbox { name: "Out",           email_label: "Sent",    icon: "📤", indent: 0, has_children: false, separator_after: false, show_in_email_skin: true },
-            Mailbox { name: "Drafts",        email_label: "Drafts",  icon: "📝", indent: 0, has_children: false, separator_after: false, show_in_email_skin: true },
-            Mailbox { name: "Sent",          email_label: "Sent",    icon: "📨", indent: 0, has_children: false, separator_after: false, show_in_email_skin: false },
-            Mailbox { name: "Archive",       email_label: "Archive", icon: "📦", indent: 0, has_children: false, separator_after: false, show_in_email_skin: true },
-            Mailbox { name: "Spam",          email_label: "Spam",    icon: "⛔", indent: 0, has_children: false, separator_after: false, show_in_email_skin: true },
-            Mailbox { name: "Trash",         email_label: "Trash",   icon: "🗑", indent: 0, has_children: false, separator_after: true,  show_in_email_skin: true },
-            Mailbox { name: "Work",          email_label: "Work",    icon: "📁", indent: 0, has_children: true,  separator_after: false, show_in_email_skin: false },
-            Mailbox { name: "Projects",      email_label: "Projects",icon: "📂", indent: 1, has_children: false, separator_after: false, show_in_email_skin: false },
-            Mailbox { name: "Clients",       email_label: "Clients", icon: "📂", indent: 1, has_children: false, separator_after: false, show_in_email_skin: false },
-            Mailbox { name: "Personal",      email_label: "Personal",icon: "📁", indent: 0, has_children: true,  separator_after: false, show_in_email_skin: false },
-            Mailbox { name: "Receipts",      email_label: "Receipts",icon: "📂", indent: 1, has_children: false, separator_after: false, show_in_email_skin: false },
-            Mailbox { name: "Travel",        email_label: "Travel",  icon: "📂", indent: 1, has_children: false, separator_after: true,  show_in_email_skin: false },
-            Mailbox { name: "Mailing Lists", email_label: "Lists",   icon: "📋", indent: 0, has_children: false, separator_after: false, show_in_email_skin: false },
-            Mailbox { name: "Newsletters",   email_label: "News",    icon: "📰", indent: 0, has_children: false, separator_after: false, show_in_email_skin: false },
-        ];
+        let data_dir = resolve_data_dir();
+        seed_store_if_needed(&data_dir);
+        let conf = macmbx::conf::Conf::load(data_dir.join("geudora.ini"))
+            .unwrap_or_else(|_| macmbx::conf::Conf::new());
+
+        let (mailboxes, messages, contacts, filters) = load_macmbx_data(&data_dir, &conf);
 
         let labels = vec![
             LabelDef { name: "Work",     color: "#5b5fc7", bg_rgba: "rgba(91,95,199,0.15)" },
@@ -182,7 +709,7 @@ impl AppState {
             LabelDef { name: "Team",     color: "#1abc9c", bg_rgba: "rgba(26,188,156,0.15)" },
         ];
 
-        let messages = vec![
+        let _unused_messages = vec![
             MailMessage {
                 id: 1,
                 mailbox: "In".to_string(),
@@ -593,27 +1120,13 @@ impl AppState {
                 labels: vec!["Work", "Dev"],
             },
         ];
+        let _ = _unused_messages;
 
-        let contacts = vec![
-            Contact { name: "Steve Dorner", email: "sdorner@qualcomm.com",   phone: "(858) 555-0100", company: "Qualcomm",    title: "Chief Architect",  notes: "Creator of Eudora. Prefers plain text.", color: "#326ea5", initials: "SD" },
-            Contact { name: "Jeff Beckley", email: "jbeckley@qualcomm.com",  phone: "(858) 555-0101", company: "Qualcomm",    title: "Senior Engineer",  notes: "Toolbar and UI specialist.",             color: "#a55532", initials: "JB" },
-            Contact { name: "Alan Strider", email: "astrider@example.com",   phone: "(415) 555-0200", company: "Acme Corp",   title: "Finance Director", notes: "Sends quarterly reports.",               color: "#2ea043", initials: "AS" },
-            Contact { name: "Dana Park",    email: "dpark@example.com",      phone: "(415) 555-0201", company: "TechStudio",  title: "Design Lead",      notes: "Conference co-speaker.",                 color: "#9b32a5", initials: "DP" },
-            Contact { name: "Rick Langley", email: "rick@example.com",       phone: "(510) 555-0300", company: "",            title: "",                 notes: "College friend. Likes ramen.",           color: "#d29922", initials: "RL" },
-            Contact { name: "Lisa Warren",  email: "lwarren@design.example", phone: "(510) 555-0301", company: "DesignWorks", title: "UX Researcher",    notes: "Working on mobile nav project.",         color: "#d2372d", initials: "LW" },
-            Contact { name: "Bob Chen",     email: "bchen@example.com",      phone: "(650) 555-0400", company: "CloudSoft",   title: "DevOps Manager",   notes: "Handles infrastructure.",               color: "#32a582", initials: "BC" },
-            Contact { name: "Maria Santos", email: "msantos@example.com",    phone: "(650) 555-0401", company: "DataFlow",    title: "Data Scientist",   notes: "ML and analytics expert.",              color: "#6450b4", initials: "MS" },
-        ];
+        let selected_in_msg_id = messages.iter().find(|m| m.mailbox == "In").map(|m| m.id).unwrap_or(1);
+        let selected_out_msg_id = messages.iter().find(|m| m.mailbox == "Out").map(|m| m.id).unwrap_or(1);
 
-        let filters = vec![
-            MailFilter { name: "Mailing Lists",  condition: "To contains @list.example",          action: "Move to Mailing Lists",    enabled: true  },
-            MailFilter { name: "Newsletters",    condition: "From contains newsletter",            action: "Move to Newsletters",      enabled: true  },
-            MailFilter { name: "Spam Keywords",  condition: "Subject contains winner|lottery",     action: "Move to Junk",             enabled: true  },
-            MailFilter { name: "Work Priority",  condition: "From contains @qualcomm.com",         action: "Set Priority: High, Flag", enabled: true  },
-            MailFilter { name: "Large Attach",   condition: "Attachment Size > 5MB",               action: "Add Label: Large",         enabled: false },
-            MailFilter { name: "Auto-Reply OOO", condition: "Subject is Out of Office",            action: "Skip Inbox, Auto-Reply",   enabled: true  },
-            MailFilter { name: "Conference",     condition: "Subject contains conference|summit",  action: "Move to Work/Projects",    enabled: false },
-        ];
+        let in_unread = messages.iter().filter(|m| m.mailbox == "In" && m.unread).count();
+        let in_total = messages.iter().filter(|m| m.mailbox == "In").count();
 
         Self {
             skin: Skin::Eudora,
@@ -621,6 +1134,8 @@ impl AppState {
             pending_skin: None,
             dirty: false,
             dark_mode: false,
+            data_dir,
+            conf,
             mailboxes,
             labels,
             messages,
@@ -628,8 +1143,8 @@ impl AppState {
             filters,
             selected_mailbox: "In".to_string(),
             selected_label: None,
-            selected_in_msg_id: 1,
-            selected_out_msg_id: 101,
+            selected_in_msg_id,
+            selected_out_msg_id,
             selected_contact_idx: 0,
             eudora_tab: EudoraTab::In,
             email_mode: EmailViewMode::Mail,
@@ -637,10 +1152,139 @@ impl AppState {
             compose: ComposeDraft::default(),
             settings_category: "getting_started".to_string(),
             settings_status: "Ready — All 21 classic Eudora configuration panels loaded.".to_string(),
-            status_left: "In — 7 messages, 3 unread".to_string(),
+            status_left: format!("In — {} messages, {} unread", in_total, in_unread),
             status_center: "IMAP Idle".to_string(),
             status_right: "Connected to mail.example.com".to_string(),
         }
+    }
+
+    fn reload_from_disk(&mut self) {
+        let (mailboxes, messages, contacts, filters) = load_macmbx_data(&self.data_dir, &self.conf);
+        self.mailboxes = mailboxes;
+        self.messages = messages;
+        self.contacts = contacts;
+        self.filters = filters;
+
+        if !self.messages.iter().any(|m| m.id == self.selected_in_msg_id) {
+            self.selected_in_msg_id = self.messages.iter().find(|m| m.mailbox == "In").map(|m| m.id).unwrap_or(0);
+        }
+        if !self.messages.iter().any(|m| m.id == self.selected_out_msg_id) {
+            self.selected_out_msg_id = self.messages.iter().find(|m| m.mailbox == "Out").map(|m| m.id).unwrap_or(0);
+        }
+
+        let in_unread = self.unread_count("In");
+        let in_total = self.messages.iter().filter(|m| m.mailbox == "In").count();
+        self.status_left = format!("In — {} messages, {} unread", in_total, in_unread);
+        self.dirty = true;
+    }
+
+    fn send_composed_message(&mut self) {
+        let from = if self.compose.from.is_empty() {
+            self.conf.get("Settings", "ReturnAddress").unwrap_or("you@example.com").to_string()
+        } else {
+            self.compose.from.clone()
+        };
+        let to = self.compose.to.clone();
+        let cc = self.compose.cc.clone();
+        let subject = if self.compose.subject.is_empty() {
+            "(No Subject)".to_string()
+        } else {
+            self.compose.subject.clone()
+        };
+        let body = self.compose.body_html.clone();
+
+        let raw = format!(
+            "From: {}\r\nTo: {}\r\nCc: {}\r\nSubject: {}\r\nDate: {}\r\nContent-Type: text/html; charset=utf-8\r\n\r\n{}\r\n",
+            from, to, cc, subject, "Sat, 7 Mar 2026 12:00:00 -0800", body
+        );
+
+        let out_path = self.data_dir.join("mailboxes").join("Out");
+        if let Ok(mut out_toc) = macmbx::toc::Toc::open_or_create(&out_path) {
+            let _ = macmbx::ops::append_message(&mut out_toc, raw.as_bytes(), &from, macmbx::toc::State::Queued, 3);
+            let _ = out_toc.save();
+        }
+
+        self.reload_from_disk();
+        self.compose = ComposeDraft::default();
+        self.compose_open = false;
+        self.eudora_tab = EudoraTab::Out;
+        self.email_mode = EmailViewMode::Mail;
+        self.status_left = "Message queued in Out mailbox".to_string();
+        self.dirty = true;
+    }
+
+    fn trash_message(&mut self, msg_id: usize) {
+        let msg_opt = self.messages.iter().find(|m| m.id == msg_id).cloned();
+        if let Some(msg) = msg_opt {
+            if msg.mailbox == "Trash" {
+                return;
+            }
+            let toc_idx = (msg.id - 1) % 1000;
+            let src_path = self.data_dir.join("mailboxes").join(&msg.mailbox);
+            let dst_path = self.data_dir.join("mailboxes").join("Trash");
+            if let (Ok(mut src_toc), Ok(mut dst_toc)) = (
+                macmbx::toc::Toc::open_or_create(&src_path),
+                macmbx::toc::Toc::open_or_create(&dst_path),
+            ) {
+                if toc_idx < src_toc.msgs.len() {
+                    let _ = macmbx::ops::transfer(&mut src_toc, toc_idx, &mut dst_toc, false);
+                    let _ = src_toc.save();
+                    let _ = dst_toc.save();
+                }
+            }
+            self.reload_from_disk();
+            self.status_left = "Moved message to Trash".to_string();
+            self.dirty = true;
+        }
+    }
+
+    fn toggle_flag_message(&mut self, msg_id: usize) {
+        if let Some(msg) = self.messages.iter_mut().find(|m| m.id == msg_id) {
+            msg.flagged = !msg.flagged;
+            let toc_idx = (msg.id - 1) % 1000;
+            let mbox_path = self.data_dir.join("mailboxes").join(&msg.mailbox);
+            if let Ok(mut toc) = macmbx::toc::Toc::open_or_create(&mbox_path) {
+                if toc_idx < toc.msgs.len() {
+                    if msg.flagged {
+                        let _ = macmbx::ops::set_flags(&mut toc, toc_idx, macmbx::toc::MsgFlags::FLAGGED);
+                    } else {
+                        let _ = macmbx::ops::clear_flags(&mut toc, toc_idx, macmbx::toc::MsgFlags::FLAGGED);
+                    }
+                    let _ = toc.save();
+                }
+            }
+            self.dirty = true;
+        }
+    }
+
+    fn mark_read(&mut self, msg_id: usize) {
+        if let Some(msg) = self.messages.iter_mut().find(|m| m.id == msg_id) {
+            if msg.unread {
+                msg.unread = false;
+                let toc_idx = (msg.id - 1) % 1000;
+                let mbox_path = self.data_dir.join("mailboxes").join(&msg.mailbox);
+                if let Ok(mut toc) = macmbx::toc::Toc::open_or_create(&mbox_path) {
+                    if toc_idx < toc.msgs.len() {
+                        let _ = macmbx::ops::set_state(&mut toc, toc_idx, macmbx::toc::State::Read);
+                        let _ = toc.save();
+                    }
+                }
+                self.dirty = true;
+            }
+        }
+    }
+
+    fn save_settings(&mut self, username: &str, pop_srv: &str, realname: &str, smtp_srv: &str, email: &str) {
+        self.conf.set("Settings", "LoginName", username);
+        self.conf.set("Settings", "MailServer", pop_srv);
+        self.conf.set("Settings", "RealName", realname);
+        self.conf.set("Settings", "SMTPServer", smtp_srv);
+        self.conf.set("Settings", "ReturnAddress", email);
+        let ini_path = self.data_dir.join("geudora.ini");
+        let _ = self.conf.save_as(&ini_path);
+        self.settings_status = format!("✓ Saved configuration to {}", ini_path.display());
+        self.status_left = "Settings saved to geudora.ini".to_string();
+        self.dirty = true;
     }
 
     fn unread_count(&self, mailbox: &str) -> usize {
@@ -751,7 +1395,7 @@ fn display_name(addr: &str) -> &str {
 
 fn build_contact_list_html(state: &AppState) -> String {
     let mut indexed: Vec<(usize, &Contact)> = state.contacts.iter().enumerate().collect();
-    indexed.sort_by(|a, b| a.1.name.cmp(b.1.name));
+    indexed.sort_by(|a, b| a.1.name.cmp(&b.1.name));
 
     let mut list_html = String::new();
     let mut last_letter = '\0';
@@ -776,9 +1420,9 @@ fn build_contact_list_html(state: &AppState) -> String {
             ""
         };
         let subtitle = match (c.title.is_empty(), c.company.is_empty()) {
-            (false, false) => format!("{} • {}", escape_html(c.title), escape_html(c.company)),
-            (false, true) => escape_html(c.title),
-            (true, false) => escape_html(c.company),
+            (false, false) => format!("{} • {}", escape_html(&c.title), escape_html(&c.company)),
+            (false, true) => escape_html(&c.title),
+            (true, false) => escape_html(&c.company),
             (true, true) => String::new(),
         };
         list_html.push_str(&format!(
@@ -791,9 +1435,9 @@ fn build_contact_list_html(state: &AppState) -> String {
   </div>
 </div>"#,
             color = c.color,
-            initials = escape_html(c.initials),
-            name = escape_html(c.name),
-            email = escape_html(c.email),
+            initials = escape_html(&c.initials),
+            name = escape_html(&c.name),
+            email = escape_html(&c.email),
         ));
     }
     list_html
@@ -816,9 +1460,9 @@ fn build_contact_detail_html(state: &AppState) -> String {
         ""
     };
     let subtitle = match (c.title.is_empty(), c.company.is_empty()) {
-        (false, false) => format!("{} at {}", escape_html(c.title), escape_html(c.company)),
-        (false, true) => escape_html(c.title),
-        (true, false) => escape_html(c.company),
+        (false, false) => format!("{} at {}", escape_html(&c.title), escape_html(&c.company)),
+        (false, true) => escape_html(&c.title),
+        (true, false) => escape_html(&c.company),
         (true, true) => String::new(),
     };
     let subtitle_html = if !subtitle.is_empty() {
@@ -835,7 +1479,7 @@ fn build_contact_detail_html(state: &AppState) -> String {
           <div class="contact-info-value">{company}</div>
         </div>
       </div>"#,
-            company = escape_html(c.company)
+            company = escape_html(&c.company)
         )
     } else {
         String::new()
@@ -846,7 +1490,7 @@ fn build_contact_detail_html(state: &AppState) -> String {
     for msg in state
         .messages
         .iter()
-        .filter(|m| m.from.contains(c.email) || m.to.contains(c.email))
+        .filter(|m| m.from.contains(&c.email) || m.to.contains(&c.email))
         .take(3)
     {
         recent_rows.push_str(&format!(
@@ -914,11 +1558,11 @@ fn build_contact_detail_html(state: &AppState) -> String {
     </div>
   </div>"#,
         color = c.color,
-        initials = escape_html(c.initials),
-        name = escape_html(c.name),
-        email = escape_html(c.email),
-        phone = escape_html(c.phone),
-        notes = escape_html(c.notes),
+        initials = escape_html(&c.initials),
+        name = escape_html(&c.name),
+        email = escape_html(&c.email),
+        phone = escape_html(&c.phone),
+        notes = escape_html(&c.notes),
     )
 }
 
@@ -935,7 +1579,7 @@ fn render_eudora_all(doc: &mut Document, state: &mut AppState) {
     state.ensure_valid_selection();
     state.update_status_bar();
 
-    sync_dark_mode(doc, state.dark_mode);
+    sync_theme_and_mode(doc, state.skin, state.last_mail_skin, state.dark_mode);
     render_eudora_mailboxes(doc, state);
     render_eudora_tabs(doc, state);
     render_eudora_in_page(doc, state);
@@ -952,7 +1596,7 @@ fn render_eudora_mailboxes(doc: &mut Document, state: &AppState) {
     };
     let mut html = String::new();
     for mb in &state.mailboxes {
-        let unread = state.unread_count(mb.name);
+        let unread = state.unread_count(&mb.name);
         let is_selected = match state.eudora_tab {
             EudoraTab::In => state.selected_mailbox == mb.name,
             EudoraTab::Out => mb.name == "Out",
@@ -981,7 +1625,7 @@ fn render_eudora_mailboxes(doc: &mut Document, state: &AppState) {
 
         html.push_str(&format!(
             r#"<div class="{classes}" data-mailbox="{name}">{expand_html}<span class="wazoo-icon">{icon}</span><span class="wazoo-name">{name}</span>{badge_html}</div>"#,
-            name = escape_html(mb.name),
+            name = escape_html(&mb.name),
             icon = mb.icon,
         ));
         if mb.separator_after {
@@ -1322,9 +1966,9 @@ fn render_eudora_filters(doc: &mut Document, state: &AppState) {
   <span class="filter-status-pill {status_cls}">{pill_text}</span>
 </div>"#,
                 num = idx + 1,
-                name = escape_html(f.name),
-                cond = escape_html(f.condition),
-                action = escape_html(f.action),
+                name = escape_html(&f.name),
+                cond = escape_html(&f.condition),
+                action = escape_html(&f.action),
             ));
         }
         set_inner_html_indexed(doc, cards_el, &html);
@@ -1365,7 +2009,7 @@ fn render_eudora_statusbar(doc: &mut Document, state: &AppState) {
 fn render_email_all(doc: &mut Document, state: &mut AppState) {
     state.ensure_valid_selection();
 
-    sync_dark_mode(doc, state.dark_mode);
+    sync_theme_and_mode(doc, state.skin, state.last_mail_skin, state.dark_mode);
     render_email_sidebar(doc, state);
     render_email_center_list(doc, state);
     render_email_right_pane(doc, state);
@@ -1376,7 +2020,7 @@ fn render_email_sidebar(doc: &mut Document, state: &AppState) {
         let mut html = String::new();
 
         for mb in state.mailboxes.iter().filter(|m| m.show_in_email_skin) {
-            let unread = state.unread_count(mb.name);
+            let unread = state.unread_count(&mb.name);
             let is_active = state.email_mode == EmailViewMode::Mail
                 && state.selected_label.is_none()
                 && state.selected_mailbox == mb.name;
@@ -1393,9 +2037,9 @@ fn render_email_sidebar(doc: &mut Document, state: &AppState) {
   <span class="sidebar-label">{label}</span>
   {badge}
 </div>"#,
-                name = escape_html(mb.name),
+                name = escape_html(&mb.name),
                 icon = mb.icon,
-                label = escape_html(mb.email_label),
+                label = escape_html(&mb.email_label),
             ));
 
             if mb.name == "In" {
@@ -1752,7 +2396,7 @@ const SETTINGS_CATEGORIES: &[(&str, &str, &str, &str)] = &[
 ];
 
 fn render_settings_all(doc: &mut Document, state: &mut AppState) {
-    sync_dark_mode(doc, state.dark_mode);
+    sync_theme_and_mode(doc, state.skin, state.last_mail_skin, state.dark_mode);
 
     let active_cat = state.settings_category.as_str();
 
@@ -1788,28 +2432,48 @@ fn render_settings_all(doc: &mut Document, state: &mut AppState) {
         }
     }
 
+    // Populate Getting Started config inputs from macmbx Conf
+    if let Some(el) = doc.get_element_by_id("cfg-username") {
+        let val = state.conf.get("Settings", "LoginName").unwrap_or("you");
+        doc.set_attribute(el, "value", val);
+    }
+    if let Some(el) = doc.get_element_by_id("cfg-pop-server") {
+        let val = state.conf.get("Settings", "MailServer").unwrap_or("mail.example.com");
+        doc.set_attribute(el, "value", val);
+    }
+    if let Some(el) = doc.get_element_by_id("cfg-realname") {
+        let val = state.conf.get("Settings", "RealName").unwrap_or("You");
+        doc.set_attribute(el, "value", val);
+    }
+    if let Some(el) = doc.get_element_by_id("cfg-smtp-server") {
+        let val = state.conf.get("Settings", "SMTPServer").unwrap_or("smtp.example.com");
+        doc.set_attribute(el, "value", val);
+    }
+    if let Some(el) = doc.get_element_by_id("cfg-email") {
+        let val = state.conf.get("Settings", "ReturnAddress").unwrap_or("you@example.com");
+        doc.set_attribute(el, "value", val);
+    }
+
     set_text_by_id(doc, "settings-status-msg", &state.settings_status);
 }
 
-fn sync_dark_mode(doc: &mut Document, dark: bool) {
+fn sync_theme_and_mode(doc: &mut Document, skin: Skin, last_mail_skin: Skin, dark: bool) {
+    let effective_skin = match skin {
+        Skin::Settings => last_mail_skin,
+        _ => skin,
+    };
     let root_id = doc.root.node_id;
-    if dark {
-        doc.class_list_add(root_id, "dark");
-    } else {
-        doc.class_list_remove(root_id, "dark");
-    }
-    if let Some(html_el) = doc.query_selector("html") {
-        if dark {
-            doc.class_list_add(html_el, "dark");
-        } else {
-            doc.class_list_remove(html_el, "dark");
+    for el in [Some(root_id), doc.query_selector("html"), doc.query_selector("body")].into_iter().flatten() {
+        doc.class_list_remove(el, "eudora-theme");
+        doc.class_list_remove(el, "email-theme");
+        match effective_skin {
+            Skin::Eudora | Skin::Settings => doc.class_list_add(el, "eudora-theme"),
+            Skin::Email => doc.class_list_add(el, "email-theme"),
         }
-    }
-    if let Some(body_el) = doc.query_selector("body") {
         if dark {
-            doc.class_list_add(body_el, "dark");
+            doc.class_list_add(el, "dark");
         } else {
-            doc.class_list_remove(body_el, "dark");
+            doc.class_list_remove(el, "dark");
         }
     }
     if let Some(btn) = doc.get_element_by_id("btn-dark") {
@@ -1885,8 +2549,22 @@ fn handle_click(doc: &mut Document, target: u32, state: &mut AppState) {
                     return;
                 }
                 "save-settings" => {
-                    state.settings_status = "✓ Settings saved to Eudora configuration.".to_string();
-                    state.status_left = "Settings saved".to_string();
+                    let username = doc.get_element_by_id("cfg-username")
+                        .and_then(|el| doc.get_attribute(el, "value"))
+                        .unwrap_or_else(|| state.conf.get("Settings", "LoginName").unwrap_or("you").to_string());
+                    let pop_srv = doc.get_element_by_id("cfg-pop-server")
+                        .and_then(|el| doc.get_attribute(el, "value"))
+                        .unwrap_or_else(|| state.conf.get("Settings", "MailServer").unwrap_or("mail.example.com").to_string());
+                    let realname = doc.get_element_by_id("cfg-realname")
+                        .and_then(|el| doc.get_attribute(el, "value"))
+                        .unwrap_or_else(|| state.conf.get("Settings", "RealName").unwrap_or("You").to_string());
+                    let smtp_srv = doc.get_element_by_id("cfg-smtp-server")
+                        .and_then(|el| doc.get_attribute(el, "value"))
+                        .unwrap_or_else(|| state.conf.get("Settings", "SMTPServer").unwrap_or("smtp.example.com").to_string());
+                    let email = doc.get_element_by_id("cfg-email")
+                        .and_then(|el| doc.get_attribute(el, "value"))
+                        .unwrap_or_else(|| state.conf.get("Settings", "ReturnAddress").unwrap_or("you@example.com").to_string());
+                    state.save_settings(&username, &pop_srv, &realname, &smtp_srv, &email);
                     state.pending_skin = Some(state.last_mail_skin);
                     return;
                 }
@@ -1905,7 +2583,11 @@ fn handle_click(doc: &mut Document, target: u32, state: &mut AppState) {
                         },
                     };
                     state.last_mail_skin = next;
-                    state.pending_skin = Some(next);
+                    if state.skin == Skin::Settings {
+                        render_active_skin(doc, state);
+                    } else {
+                        state.pending_skin = Some(next);
+                    }
                     return;
                 }
                 "toggle-dark" => {
@@ -1914,9 +2596,7 @@ fn handle_click(doc: &mut Document, target: u32, state: &mut AppState) {
                     return;
                 }
                 "check-mail" => {
-                    let unread = state.unread_count("In");
-                    state.status_left = format!("Checked mail — {} unread in In", unread);
-                    state.status_center = "Up to date".to_string();
+                    state.reload_from_disk();
                     render_active_skin(doc, state);
                     return;
                 }
@@ -2003,10 +2683,12 @@ fn handle_click(doc: &mut Document, target: u32, state: &mut AppState) {
                     return;
                 }
                 "trash" => {
-                    let active_id = state.selected_in_msg_id;
-                    if let Some(msg) = state.messages.iter_mut().find(|m| m.id == active_id) {
-                        msg.mailbox = "Trash".to_string();
-                    }
+                    let active_id = if state.skin == Skin::Eudora && state.eudora_tab == EudoraTab::Out {
+                        state.selected_out_msg_id
+                    } else {
+                        state.selected_in_msg_id
+                    };
+                    state.trash_message(active_id);
                     render_active_skin(doc, state);
                     return;
                 }
@@ -2027,18 +2709,17 @@ fn handle_click(doc: &mut Document, target: u32, state: &mut AppState) {
                     return;
                 }
                 "star" => {
-                    let active_id = state.selected_in_msg_id;
-                    if let Some(msg) = state.messages.iter_mut().find(|m| m.id == active_id) {
-                        msg.flagged = !msg.flagged;
-                    }
+                    let active_id = if state.skin == Skin::Eudora && state.eudora_tab == EudoraTab::Out {
+                        state.selected_out_msg_id
+                    } else {
+                        state.selected_in_msg_id
+                    };
+                    state.toggle_flag_message(active_id);
                     render_active_skin(doc, state);
                     return;
                 }
                 "send" | "queue" => {
-                    state.compose_open = false;
-                    state.eudora_tab = EudoraTab::Out;
-                    state.email_mode = EmailViewMode::Mail;
-                    state.status_left = "Message queued/sent in Out".to_string();
+                    state.send_composed_message();
                     render_active_skin(doc, state);
                     return;
                 }
@@ -2148,9 +2829,7 @@ fn handle_click(doc: &mut Document, target: u32, state: &mut AppState) {
                     state.selected_out_msg_id = msg_id;
                 } else {
                     state.selected_in_msg_id = msg_id;
-                    if let Some(msg) = state.messages.iter_mut().find(|m| m.id == msg_id) {
-                        msg.unread = false;
-                    }
+                    state.mark_read(msg_id);
                 }
                 state.email_mode = EmailViewMode::Mail;
                 render_active_skin(doc, state);

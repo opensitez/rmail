@@ -5,110 +5,208 @@
 <title>Eudora — Settings &amp; Configuration</title>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root, .eudora-theme {
+    --app-bg: #f5f3f0;
+    --text-main: #231e19;
+    --text-muted: #78726c;
+    --border-color: #d2cfc8;
+    --card-bg: #ffffff;
+    --card-border: #dedad2;
+    --input-bg: #faf8f5;
+    --input-border: #d4cfc6;
+    --toolbar-bg: #f5f3f0;
+    --tabbar-bg: #e6e3de;
+    --tab-bg: #ddd8ce;
+    --tab-hover: #e8e3db;
+    --tab-active-bg: #f5f3f0;
+    --sidebar-bg: #f8f7f4;
+    --sidebar-header-bg: #eae5dc;
+    --sidebar-item-hover: #eeecea;
+    --accent: #326ea5;
+    --accent-hover: #285f94;
+    --accent-active: #1e5082;
+    --accent-text: #ffffff;
+    --accent-light: rgba(50, 110, 165, 0.12);
+  }
+
+  .dark, .eudora-theme.dark {
+    --app-bg: #1e1e21;
+    --text-main: #cdc8c1;
+    --text-muted: #7d7870;
+    --border-color: #32323a;
+    --card-bg: #202024;
+    --card-border: #2c2c30;
+    --input-bg: #18181b;
+    --input-border: #32323a;
+    --toolbar-bg: #1a1a1d;
+    --tabbar-bg: #161619;
+    --tab-bg: #202025;
+    --tab-hover: #28282e;
+    --tab-active-bg: #1e1e21;
+    --sidebar-bg: #121215;
+    --sidebar-header-bg: #1a1a1d;
+    --sidebar-item-hover: #202025;
+    --accent: #326ea5;
+    --accent-hover: #285f94;
+    --accent-active: #2d4d78;
+    --accent-text: #ffffff;
+    --accent-light: rgba(50, 110, 165, 0.25);
+  }
+
+  .email-theme {
+    --app-bg: #ffffff;
+    --text-main: #1e1e1e;
+    --text-muted: #6b7280;
+    --border-color: #e5e7eb;
+    --card-bg: #ffffff;
+    --card-border: #e5e7eb;
+    --input-bg: #ffffff;
+    --input-border: #d1d5db;
+    --toolbar-bg: #f5f5f5;
+    --tabbar-bg: #f3f4f6;
+    --tab-bg: #e5e7eb;
+    --tab-hover: #e0e2e5;
+    --tab-active-bg: #ffffff;
+    --sidebar-bg: #f5f5f5;
+    --sidebar-header-bg: #e5e7eb;
+    --sidebar-item-hover: #e5e7eb;
+    --accent: #0078d4;
+    --accent-hover: #106ebe;
+    --accent-active: #005a9e;
+    --accent-text: #ffffff;
+    --accent-light: rgba(0, 120, 212, 0.12);
+  }
+
+  .email-theme.dark, .dark.email-theme {
+    --app-bg: #111827;
+    --text-main: #f3f4f6;
+    --text-muted: #9ca3af;
+    --border-color: #263244;
+    --card-bg: #1e293b;
+    --card-border: #334155;
+    --input-bg: #0f172a;
+    --input-border: #334155;
+    --toolbar-bg: #111827;
+    --tabbar-bg: #0f172a;
+    --tab-bg: #1f2937;
+    --tab-hover: #273548;
+    --tab-active-bg: #111827;
+    --sidebar-bg: #111827;
+    --sidebar-header-bg: #1f2937;
+    --sidebar-item-hover: #1f2937;
+    --accent: #1d4ed8;
+    --accent-hover: #2563eb;
+    --accent-active: #1e40af;
+    --accent-text: #ffffff;
+    --accent-light: rgba(29, 78, 216, 0.25);
+  }
+
   html, body {
     height: 100%; overflow: hidden;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    font-size: 13px; background: #edeae4; color: #1c1917; user-select: none;
+    font-size: 13px; background: var(--app-bg); color: var(--text-main); user-select: none;
   }
-  .app { display: flex; flex-direction: column; height: 100vh; width: 100vw; overflow: hidden; }
+  .app { display: flex; flex-direction: column; height: 100vh; width: 100vw; overflow: hidden; background: var(--app-bg); }
 
   /* ── TOP BAR ── */
   .toolbar {
     display: flex; align-items: center; gap: 3px; height: 40px; padding: 0 10px;
-    background: linear-gradient(180deg, #faf8f5 0%, #edeae2 100%);
-    border-bottom: 1px solid #d4cfc6; flex-shrink: 0;
+    background: var(--toolbar-bg);
+    border-bottom: 1px solid var(--border-color); flex-shrink: 0;
   }
   .tb-brand {
     display: flex; align-items: center; gap: 7px; padding-right: 12px;
-    border-right: 1px solid #ddd8ce; margin-right: 6px;
+    border-right: 1px solid var(--border-color); margin-right: 6px;
   }
   .tb-logo {
     width: 24px; height: 24px; border-radius: 6px;
-    background: linear-gradient(135deg, #c2410c 0%, #ea580c 60%, #f97316 100%);
+    background: var(--accent);
     display: flex; align-items: center; justify-content: center;
-    font-size: 13px; color: #fff; font-weight: 800; flex-shrink: 0;
-    box-shadow: 0 1px 3px rgba(194,65,12,.35);
+    font-size: 13px; color: var(--accent-text); font-weight: 800; flex-shrink: 0;
   }
-  .tb-name { font-size: 14px; font-weight: 700; color: #1c1917; letter-spacing: -0.3px; }
-  .tb-ver  { font-size: 10px; color: #a8a29e; font-weight: 500; margin-top: 1px; }
+  .tb-name { font-size: 14px; font-weight: 700; color: var(--text-main); letter-spacing: -0.3px; }
+  .tb-ver  { font-size: 10px; color: var(--text-muted); font-weight: 500; margin-top: 1px; }
 
   .tb-btn {
     display: flex; align-items: center; gap: 5px; padding: 5px 10px;
     border-radius: 6px; border: 1px solid transparent; background: transparent;
-    color: #44403c; font-size: 12px; font-weight: 500; cursor: pointer; white-space: nowrap;
+    color: var(--text-main); font-size: 12px; font-weight: 500; cursor: pointer; white-space: nowrap;
+    font-family: inherit;
   }
-  .tb-btn:hover { background: #e5e0d8; border-color: #d4cfc6; color: #1c1917; }
-  .tb-btn.primary { background: #ea580c; color: #fff; border-color: #c2410c; font-weight: 600; }
-  .tb-btn.primary:hover { background: #c2410c; }
-  .tb-sep { width: 1px; height: 20px; background: #d4cfc6; margin: 0 4px; flex-shrink: 0; }
+  .tb-btn:hover { background: var(--sidebar-item-hover); color: var(--text-main); }
+  .tb-btn.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+  .tb-btn.primary:hover { background: var(--accent-hover); }
+  .tb-sep { width: 1px; height: 20px; background: var(--border-color); margin: 0 4px; flex-shrink: 0; }
   .tb-spacer { flex: 1; }
 
   /* ── TAB BAR ── */
   .tabbar {
     display: flex; align-items: flex-end; height: 32px; padding: 0 8px;
-    background: #e5e0d8; border-bottom: 1px solid #ccc6bc; gap: 2px; flex-shrink: 0;
+    background: var(--tabbar-bg); border-bottom: 1px solid var(--border-color); gap: 2px; flex-shrink: 0;
   }
   .tab {
     display: flex; align-items: center; gap: 6px; padding: 5px 13px 6px;
-    border-radius: 6px 6px 0 0; font-size: 12px; font-weight: 500; color: #78716c;
+    border-radius: 6px 6px 0 0; font-size: 12px; font-weight: 500; color: var(--text-muted);
     cursor: pointer; border: 1px solid transparent; border-bottom: none;
-    background: #ddd8ce; position: relative; top: 1px; white-space: nowrap;
+    background: var(--tab-bg); position: relative; top: 1px; white-space: nowrap;
   }
-  .tab:hover { background: #e8e3db; color: #292524; }
+  .tab:hover { background: var(--tab-hover); color: var(--text-main); }
   .tab.active {
-    background: #f7f4ef; color: #1c1917; font-weight: 600;
-    border-color: #ccc6bc; border-bottom-color: #f7f4ef; z-index: 2;
+    background: var(--app-bg); color: var(--text-main); font-weight: 600;
+    border-color: var(--border-color); border-bottom-color: var(--app-bg);
+    border-top: 3px solid var(--accent); z-index: 2;
   }
 
   /* ── MAIN WORKSPACE ── */
-  .workspace { display: flex; flex: 1; min-height: 0; overflow: hidden; background: #f7f4ef; }
+  .workspace { display: flex; flex: 1; min-height: 0; overflow: hidden; background: var(--app-bg); }
 
   /* ── LEFT CATEGORY LIST (Eudora Options Sidebar) ── */
   .cat-sidebar {
-    width: 220px; min-width: 220px; background: #f2efe9;
-    border-right: 1px solid #d4cfc6; display: flex; flex-direction: column; overflow: hidden;
+    width: 220px; min-width: 220px; background: var(--sidebar-bg);
+    border-right: 1px solid var(--border-color); display: flex; flex-direction: column; overflow: hidden;
   }
   .cat-header {
     padding: 9px 12px 7px; font-size: 10px; font-weight: 700; text-transform: uppercase;
-    letter-spacing: 0.7px; color: #78716c; border-bottom: 1px solid #e4dfd7;
-    background: #eae5dc;
+    letter-spacing: 0.7px; color: var(--text-muted); border-bottom: 1px solid var(--border-color);
+    background: var(--sidebar-header-bg);
   }
   .cat-list { flex: 1; overflow-y: auto; padding: 6px; display: flex; flex-direction: column; gap: 2px; }
   .cat-item {
     display: flex; align-items: center; gap: 9px; padding: 7px 10px;
-    border-radius: 6px; cursor: pointer; color: #44403c; font-size: 12.5px;
+    border-radius: 6px; cursor: pointer; color: var(--text-main); font-size: 12.5px;
     font-weight: 500; border: 1px solid transparent;
   }
-  .cat-item:hover { background: #e5e0d8; color: #1c1917; }
+  .cat-item:hover { background: var(--sidebar-item-hover); color: var(--text-main); }
   .cat-item.active {
-    background: #ea580c; color: #fff; font-weight: 600;
-    border-color: #c2410c; box-shadow: 0 1px 2px rgba(194,65,12,.25);
+    background: var(--accent); color: var(--accent-text); font-weight: 600;
+    border-color: var(--accent);
   }
   .cat-ico {
-    width: 22px; height: 22px; border-radius: 5px; background: rgba(0,0,0,0.06);
+    width: 22px; height: 22px; border-radius: 5px; background: var(--accent-light);
     display: flex; align-items: center; justify-content: center; font-size: 12px; flex-shrink: 0;
   }
-  .cat-item.active .cat-ico { background: rgba(255,255,255,0.22); color: #fff; }
+  .cat-item.active .cat-ico { background: rgba(255,255,255,0.22); color: var(--accent-text); }
 
   /* ── RIGHT SETTINGS CONTENT ── */
   .settings-main {
     flex: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden;
-    background: #faf8f5;
+    background: var(--app-bg);
   }
   .settings-titlebar {
     display: flex; align-items: center; justify-content: space-between;
-    padding: 12px 20px; background: #f2efe9; border-bottom: 1px solid #ddd8ce; flex-shrink: 0;
+    padding: 12px 20px; background: var(--sidebar-bg); border-bottom: 1px solid var(--border-color); flex-shrink: 0;
   }
   .settings-title-wrap { display: flex; align-items: center; gap: 10px; }
   .settings-title-ico {
-    width: 30px; height: 30px; border-radius: 7px; background: #fff7ed;
-    border: 1px solid #fed7aa; color: #ea580c; display: flex; align-items: center;
+    width: 30px; height: 30px; border-radius: 7px; background: var(--accent-light);
+    border: 1px solid var(--accent); color: var(--accent); display: flex; align-items: center;
     justify-content: center; font-size: 15px; font-weight: 700;
   }
-  .settings-title { font-size: 16px; font-weight: 700; color: #1c1917; }
-  .settings-subtitle { font-size: 11.5px; color: #78716c; margin-top: 1px; }
+  .settings-title { font-size: 16px; font-weight: 700; color: var(--text-main); }
+  .settings-subtitle { font-size: 11.5px; color: var(--text-muted); margin-top: 1px; }
   .settings-badge {
-    padding: 3px 9px; border-radius: 12px; background: #e8e3db; color: #57534e;
+    padding: 3px 9px; border-radius: 12px; background: var(--tabbar-bg); color: var(--text-muted);
     font-size: 11px; font-weight: 600;
   }
 
@@ -120,48 +218,50 @@
 
   /* ── GROUP BOX (Classic Eudora Settings Section) ── */
   .cfg-group {
-    background: #ffffff; border: 1px solid #dedad2; border-radius: 8px;
+    background: var(--card-bg); border: 1px solid var(--card-border); border-radius: 8px;
     padding: 14px 16px; display: flex; flex-direction: column; gap: 10px;
     box-shadow: 0 1px 2px rgba(0,0,0,0.02);
   }
   .cfg-group-title {
     font-size: 11.5px; font-weight: 700; text-transform: uppercase;
-    letter-spacing: 0.5px; color: #c2410c; padding-bottom: 6px;
-    border-bottom: 1px solid #f0ece4; margin-bottom: 2px;
+    letter-spacing: 0.5px; color: var(--accent); padding-bottom: 6px;
+    border-bottom: 1px solid var(--border-color); margin-bottom: 2px;
   }
   .cfg-row {
     display: flex; align-items: center; gap: 12px; min-height: 28px;
   }
   .cfg-lbl {
-    width: 170px; min-width: 170px; font-size: 12.5px; font-weight: 500; color: #44403c;
+    width: 170px; min-width: 170px; font-size: 12.5px; font-weight: 500; color: var(--text-main);
   }
   .cfg-input {
     flex: 1; height: 30px; padding: 0 10px; border-radius: 5px;
-    border: 1px solid #d4cfc6; background: #faf8f5; color: #1c1917;
-    font-size: 12.5px; outline: none;
+    border: 1px solid var(--input-border); background: var(--input-bg); color: var(--text-main);
+    font-size: 12.5px; outline: none; font-family: inherit;
   }
-  .cfg-input:focus { border-color: #ea580c; background: #fff; }
+  .cfg-input:focus { border-color: var(--accent); }
   .cfg-num {
     width: 76px; height: 28px; padding: 0 8px; border-radius: 5px;
-    border: 1px solid #d4cfc6; background: #faf8f5; color: #1c1917;
-    font-size: 12.5px; text-align: right;
+    border: 1px solid var(--input-border); background: var(--input-bg); color: var(--text-main);
+    font-size: 12.5px; text-align: right; outline: none; font-family: inherit;
   }
+  .cfg-num:focus { border-color: var(--accent); }
   .cfg-select {
     height: 30px; padding: 0 10px; border-radius: 5px;
-    border: 1px solid #d4cfc6; background: #faf8f5; color: #1c1917;
-    font-size: 12.5px; min-width: 200px;
+    border: 1px solid var(--input-border); background: var(--input-bg); color: var(--text-main);
+    font-size: 12.5px; min-width: 200px; outline: none; font-family: inherit;
   }
+  .cfg-select:focus { border-color: var(--accent); }
   .cfg-check {
     display: flex; align-items: center; gap: 8px; font-size: 12.5px;
-    color: #292524; cursor: pointer; padding: 2px 0;
+    color: var(--text-main); cursor: pointer; padding: 2px 0;
   }
   .cfg-check input[type="checkbox"], .cfg-radio input[type="radio"] {
-    accent-color: #ea580c; width: 14px; height: 14px; cursor: pointer;
+    accent-color: var(--accent); width: 14px; height: 14px; cursor: pointer;
   }
   .cfg-radio-group { display: flex; flex-wrap: wrap; gap: 14px; align-items: center; }
   .cfg-radio {
     display: flex; align-items: center; gap: 6px; font-size: 12.5px;
-    color: #292524; cursor: pointer;
+    color: var(--text-main); cursor: pointer;
   }
   .cfg-grid-2 {
     display: grid; grid-template-columns: 1fr 1fr; gap: 8px 18px;
@@ -169,7 +269,7 @@
   .cfg-grid-3 {
     display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px 14px;
   }
-  .cfg-hint { font-size: 11.5px; color: #78716c; }
+  .cfg-hint { font-size: 11.5px; color: var(--text-muted); }
   .swatch {
     width: 22px; height: 22px; border-radius: 5px; border: 1px solid rgba(0,0,0,0.2);
     flex-shrink: 0;
@@ -178,65 +278,26 @@
   /* ── FOOTER ACTION BAR ── */
   .settings-footer {
     display: flex; align-items: center; justify-content: space-between;
-    padding: 10px 20px; background: #f2efe9; border-top: 1px solid #d4cfc6; flex-shrink: 0;
+    padding: 10px 20px; background: var(--sidebar-bg); border-top: 1px solid var(--border-color); flex-shrink: 0;
   }
-  .footer-status { font-size: 12px; color: #57534e; font-weight: 500; }
+  .footer-status { font-size: 12px; color: var(--text-muted); font-weight: 500; }
   .footer-actions { display: flex; align-items: center; gap: 8px; }
   .btn-act {
     padding: 6px 14px; border-radius: 6px; font-size: 12px; font-weight: 600;
-    cursor: pointer; border: 1px solid #cfc9be; background: #fff; color: #292524;
+    cursor: pointer; border: 1px solid var(--border-color); background: var(--card-bg); color: var(--text-main);
+    font-family: inherit;
   }
-  .btn-act:hover { background: #eae5dc; }
-  .btn-act.primary { background: #ea580c; color: #fff; border-color: #c2410c; }
-  .btn-act.primary:hover { background: #c2410c; }
+  .btn-act:hover { background: var(--sidebar-item-hover); }
+  .btn-act.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  .btn-act.primary:hover { background: var(--accent-hover); }
 
   /* ── STATUS BAR ── */
   .statusbar {
     display: flex; align-items: center; gap: 14px; height: 23px; padding: 0 12px;
-    background: #e5e0d8; border-top: 1px solid #ccc6bc; font-size: 11px; color: #78716c; flex-shrink: 0;
+    background: var(--toolbar-bg); border-top: 1px solid var(--border-color); font-size: 11px; color: var(--text-muted); flex-shrink: 0;
   }
   .sb-dot { width: 6px; height: 6px; border-radius: 50%; background: #22c55e; display: inline-block; margin-right: 4px; }
   .sb-right { margin-left: auto; display: flex; gap: 14px; }
-
-  /* ── DARK MODE (.dark) ── */
-  .dark { background: #18181b; color: #e4e4e7; }
-  .dark .toolbar { background: linear-gradient(180deg, #27272a 0%, #1f1f23 100%); border-color: #3f3f46; }
-  .dark .tb-brand { border-color: #3f3f46; }
-  .dark .tb-name { color: #f4f4f5; }
-  .dark .tb-btn { color: #a1a1aa; }
-  .dark .tb-btn:hover { background: #3f3f46; border-color: #52525b; color: #f4f4f5; }
-  .dark .tb-btn.primary { background: #ea580c; color: #fff; border-color: #c2410c; }
-  .dark .tb-sep { background: #3f3f46; }
-  .dark .tabbar { background: #18181b; border-color: #3f3f46; }
-  .dark .tab { background: #27272a; color: #a1a1aa; }
-  .dark .tab:hover { background: #3f3f46; color: #f4f4f5; }
-  .dark .tab.active { background: #1f1f23; color: #f4f4f5; border-color: #3f3f46; border-bottom-color: #1f1f23; }
-  .dark .workspace { background: #18181b; }
-  .dark .cat-sidebar { background: #1f1f23; border-color: #3f3f46; }
-  .dark .cat-header { background: #27272a; border-color: #3f3f46; color: #a1a1aa; }
-  .dark .cat-item { color: #d4d4d8; }
-  .dark .cat-item:hover { background: #27272a; color: #fff; }
-  .dark .cat-item.active { background: #ea580c; color: #fff; border-color: #c2410c; }
-  .dark .cat-ico { background: rgba(255,255,255,0.07); }
-  .dark .settings-main { background: #18181b; }
-  .dark .settings-titlebar { background: #1f1f23; border-color: #3f3f46; }
-  .dark .settings-title { color: #f4f4f5; }
-  .dark .settings-subtitle { color: #a1a1aa; }
-  .dark .settings-badge { background: #27272a; color: #d4d4d8; }
-  .dark .cfg-group { background: #222226; border-color: #3f3f46; }
-  .dark .cfg-group-title { color: #fb923c; border-color: #323238; }
-  .dark .cfg-lbl { color: #d4d4d8; }
-  .dark .cfg-input, .dark .cfg-num, .dark .cfg-select {
-    background: #18181b; border-color: #3f3f46; color: #f4f4f5;
-  }
-  .dark .cfg-check, .dark .cfg-radio { color: #e4e4e7; }
-  .dark .cfg-hint { color: #a1a1aa; }
-  .dark .settings-footer { background: #1f1f23; border-color: #3f3f46; }
-  .dark .footer-status { color: #a1a1aa; }
-  .dark .btn-act { background: #27272a; border-color: #3f3f46; color: #e4e4e7; }
-  .dark .btn-act:hover { background: #3f3f46; }
-  .dark .btn-act.primary { background: #ea580c; border-color: #c2410c; color: #fff; }
-  .dark .statusbar { background: #18181b; border-color: #3f3f46; color: #a1a1aa; }
 </style>
 </head>
 <body>
@@ -316,14 +377,14 @@
         <div class="settings-panel active" id="panel-getting_started">
           <div class="cfg-group">
             <div class="cfg-group-title">Incoming Mail</div>
-            <div class="cfg-row"><span class="cfg-lbl">User Name:</span><input class="cfg-input" type="text" value="youness"></div>
-            <div class="cfg-row"><span class="cfg-lbl">Mail Server:</span><input class="cfg-input" type="text" value="mail.eudora.org"></div>
+            <div class="cfg-row"><span class="cfg-lbl">User Name:</span><input class="cfg-input" id="cfg-username" type="text" value="youness"></div>
+            <div class="cfg-row"><span class="cfg-lbl">Mail Server:</span><input class="cfg-input" id="cfg-pop-server" type="text" value="mail.eudora.org"></div>
           </div>
           <div class="cfg-group">
             <div class="cfg-group-title">Outgoing Mail</div>
-            <div class="cfg-row"><span class="cfg-lbl">Real Name:</span><input class="cfg-input" type="text" value="Youness El Andaloussi"></div>
-            <div class="cfg-row"><span class="cfg-lbl">SMTP Server:</span><input class="cfg-input" type="text" value="smtp.eudora.org"></div>
-            <div class="cfg-row"><span class="cfg-lbl">Email Address:</span><input class="cfg-input" type="text" value="youness@eudora.org"></div>
+            <div class="cfg-row"><span class="cfg-lbl">Real Name:</span><input class="cfg-input" id="cfg-realname" type="text" value="Youness El Andaloussi"></div>
+            <div class="cfg-row"><span class="cfg-lbl">SMTP Server:</span><input class="cfg-input" id="cfg-smtp-server" type="text" value="smtp.eudora.org"></div>
+            <div class="cfg-row"><span class="cfg-lbl">Email Address:</span><input class="cfg-input" id="cfg-email" type="text" value="youness@eudora.org"></div>
           </div>
           <div class="cfg-group">
             <div class="cfg-group-title">Default Mailer</div>
