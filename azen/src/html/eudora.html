@@ -110,8 +110,20 @@
   }
   .wazoo-item.selected .wazoo-badge { background: white; color: #326ea5; }
   .wazoo-item .wazoo-expand { font-size: 8pt; color: #78726c; width: 12px; }
-  .wazoo-item.depth-1 { padding-left: 30px; }
-  .wazoo-item.depth-2 { padding-left: 48px; }
+  .wazoo-item.depth-1 { padding-left: 28px; }
+  .wazoo-item.depth-2 { padding-left: 44px; }
+  .wazoo-item.depth-3 { padding-left: 60px; }
+  .wazoo-item .wazoo-menu-btn {
+    opacity: 0;
+    font-size: 11px;
+    padding: 1px 5px;
+    border-radius: 4px;
+    color: #78726c;
+    margin-left: auto;
+  }
+  .wazoo-item:hover .wazoo-menu-btn { opacity: 0.8; }
+  .wazoo-item:hover .wazoo-menu-btn:hover { opacity: 1; background: rgba(0,0,0,0.08); }
+  .wazoo-item.selected .wazoo-menu-btn { color: white; }
   .wazoo-tabs {
     display: flex;
     border-top: 1px solid #d7d4cf;
@@ -130,6 +142,183 @@
     color: white;
   }
   .wazoo-tab:not(.selected):hover { background: #dddad5; }
+
+  /* ===== Context Menu ===== */
+  .ctx-menu {
+    position: fixed;
+    z-index: 1000;
+    background: #ffffff;
+    border: 1px solid #d2cfc8;
+    border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.18);
+    padding: 5px 0;
+    min-width: 175px;
+    display: none;
+    font-size: 9.5pt;
+    user-select: none;
+  }
+  .ctx-item {
+    padding: 6px 14px;
+    cursor: pointer;
+    color: #231e19;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .ctx-item:hover {
+    background: #326ea5;
+    color: white;
+  }
+  .ctx-sep {
+    height: 1px;
+    background: #e6e3df;
+    margin: 4px 0;
+  }
+
+  /* ===== Welcome Dashboard ===== */
+  #page-welcome {
+    overflow-y: auto;
+    background: #f5f3f0;
+    flex: 1;
+    min-height: 0;
+  }
+  .welcome-hero {
+    background: linear-gradient(135deg, #1e3a5f 0%, #2d5f8a 100%);
+    padding: 26px 36px 24px;
+    color: white;
+  }
+  .welcome-greeting {
+    font-size: 1.6em;
+    font-weight: 700;
+    color: #ffffff;
+    line-height: 1.2;
+  }
+  .welcome-account-line {
+    font-size: 0.88em;
+    color: rgba(255, 255, 255, 0.75);
+    margin-top: 6px;
+  }
+  .welcome-body {
+    padding: 24px 36px 36px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+  .welcome-stat-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 14px;
+  }
+  .stat-card {
+    background: white;
+    border-radius: 10px;
+    padding: 14px 18px;
+    border: 1px solid #dcd8d2;
+    cursor: pointer;
+    user-select: none;
+  }
+  .stat-card:hover {
+    border-color: #3182ce;
+    box-shadow: 0 2px 8px rgba(49, 130, 206, 0.15);
+  }
+  .stat-number {
+    font-size: 1.7em;
+    font-weight: 800;
+    line-height: 1.1;
+  }
+  .stat-label {
+    font-size: 0.82em;
+    color: #6a6560;
+    font-weight: 500;
+    margin-top: 4px;
+  }
+  .stat-accent-blue .stat-number { color: #3182ce; }
+  .stat-accent-green .stat-number { color: #2f855a; }
+  .stat-accent-amber .stat-number { color: #dd6b20; }
+  .stat-accent-red .stat-number { color: #e53e3e; }
+
+  .welcome-cols {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+  }
+  .wc-section-title {
+    font-size: 0.72em;
+    font-weight: 700;
+    color: #78726c;
+    letter-spacing: 0.1em;
+    margin-bottom: 10px;
+    text-transform: uppercase;
+  }
+  .action-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .action-card {
+    background: white;
+    border-radius: 10px;
+    padding: 12px 16px;
+    border: 1px solid #dcd8d2;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    cursor: pointer;
+    user-select: none;
+  }
+  .action-card:hover {
+    border-color: #3182ce;
+    background: #fbfbfd;
+  }
+  .action-icon {
+    width: 38px;
+    height: 38px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 18px;
+    background: rgba(49, 130, 206, 0.12);
+    flex-shrink: 0;
+  }
+  .action-icon-green { background: rgba(47, 133, 90, 0.12); }
+  .action-icon-amber { background: rgba(221, 107, 32, 0.12); }
+  .action-icon-purple { background: rgba(128, 90, 213, 0.12); }
+  .action-icon-rose { background: rgba(229, 62, 62, 0.12); }
+  .action-icon-cyan { background: rgba(6, 148, 162, 0.12); }
+  .action-text {
+    flex: 1;
+    min-width: 0;
+  }
+  .action-title {
+    font-size: 0.94em;
+    font-weight: 600;
+    color: #231e19;
+  }
+  .action-desc {
+    font-size: 0.80em;
+    color: #6a6560;
+  }
+  .action-arrow {
+    font-size: 14px;
+    color: #a49e97;
+    margin-right: 4px;
+  }
+  .tip-bar {
+    background: rgba(221, 107, 32, 0.08);
+    border-radius: 10px;
+    padding: 12px 18px;
+    border: 1px solid rgba(221, 107, 32, 0.25);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .tip-icon { font-size: 18px; }
+  .tip-text {
+    font-size: 0.85em;
+    color: #554f48;
+    line-height: 1.4;
+  }
 
   /* ===== Right panel ===== */
   #right-panel {
@@ -912,6 +1101,44 @@
     color: #c8c3bc;
     border-color: #32323a;
   }
+  .dark #page-welcome { background: #18181b; }
+  .dark .stat-card {
+    background: #202024;
+    border-color: #2c2c30;
+  }
+  .dark .stat-label { color: #908a84; }
+  .dark .wc-section-title { color: #908a84; }
+  .dark .action-card {
+    background: #202024;
+    border-color: #2c2c30;
+  }
+  .dark .action-card:hover {
+    background: #28282d;
+    border-color: #3182ce;
+  }
+  .dark .action-title { color: #e2ded9; }
+  .dark .action-desc { color: #908a84; }
+  .dark .action-arrow { color: #625c55; }
+  .dark .tip-bar {
+    background: rgba(221, 107, 32, 0.12);
+    border-color: rgba(221, 107, 32, 0.35);
+  }
+  .dark .tip-text { color: #d0cbc4; }
+  .dark .ctx-menu {
+    background: #232328;
+    border-color: #383842;
+    box-shadow: 0 4px 18px rgba(0,0,0,0.5);
+  }
+  .dark .ctx-item {
+    color: #e2ded9;
+  }
+  .dark .ctx-item:hover {
+    background: #326ea5;
+    color: white;
+  }
+  .dark .ctx-sep {
+    background: #33333a;
+  }
 </style>
 </head>
 <body>
@@ -963,8 +1190,121 @@
         </div>
       </div>
 
+      <!-- ===== Page: Welcome Dashboard ===== -->
+      <div class="page active" id="page-welcome">
+        <div class="welcome-hero">
+          <div class="welcome-greeting" id="welcome-greeting">Good day, Steve</div>
+          <div class="welcome-account-line" id="welcome-account-line">you@example.com • POP3 • mail.example.com • SSL</div>
+        </div>
+        <div class="welcome-body">
+          <!-- 4 Metric Stat Cards -->
+          <div class="welcome-stat-grid" id="welcome-stat-grid"></div>
+
+          <!-- Two-column Actions & Tools Grid -->
+          <div class="welcome-cols">
+            <div>
+              <div class="wc-section-title">Actions</div>
+              <div class="action-list">
+                <div class="action-card" data-action="check-mail">
+                  <div class="action-icon">📥</div>
+                  <div class="action-text">
+                    <div class="action-title">Check Mail</div>
+                    <div class="action-desc">Fetch new messages &nbsp;⌘M</div>
+                  </div>
+                  <div class="action-arrow">›</div>
+                </div>
+                <div class="action-card" data-action="new-message">
+                  <div class="action-icon action-icon-green">✏</div>
+                  <div class="action-text">
+                    <div class="action-title">New Message</div>
+                    <div class="action-desc">Compose a new email &nbsp;⌘N</div>
+                  </div>
+                  <div class="action-arrow">›</div>
+                </div>
+                <div class="action-card" data-action="send-queued">
+                  <div class="action-icon action-icon-amber">📤</div>
+                  <div class="action-text">
+                    <div class="action-title">Send Queued</div>
+                    <div class="action-desc">Deliver queued messages &nbsp;⌘T</div>
+                  </div>
+                  <div class="action-arrow">›</div>
+                </div>
+                <div class="action-card" data-action="reply">
+                  <div class="action-icon action-icon-purple">↩</div>
+                  <div class="action-text">
+                    <div class="action-title">Reply</div>
+                    <div class="action-desc">Reply to the selected message &nbsp;⌘R</div>
+                  </div>
+                  <div class="action-arrow">›</div>
+                </div>
+                <div class="action-card" data-action="forward">
+                  <div class="action-icon action-icon-cyan">→</div>
+                  <div class="action-text">
+                    <div class="action-title">Forward</div>
+                    <div class="action-desc">Forward the selected message</div>
+                  </div>
+                  <div class="action-arrow">›</div>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <div class="wc-section-title">Manage</div>
+              <div class="action-list">
+                <div class="action-card" data-open-tab="contacts">
+                  <div class="action-icon">👥</div>
+                  <div class="action-text">
+                    <div class="action-title">Address Book</div>
+                    <div class="action-desc">Manage contacts and nicknames</div>
+                  </div>
+                  <div class="action-arrow">›</div>
+                </div>
+                <div class="action-card" data-open-tab="filters">
+                  <div class="action-icon action-icon-amber">📋</div>
+                  <div class="action-text">
+                    <div class="action-title">Filters</div>
+                    <div class="action-desc">Automatic mail sorting rules</div>
+                  </div>
+                  <div class="action-arrow">›</div>
+                </div>
+                <div class="action-card" data-action="open-settings">
+                  <div class="action-icon action-icon-purple">⚙</div>
+                  <div class="action-text">
+                    <div class="action-title">Settings</div>
+                    <div class="action-desc">Accounts, display, and behavior &nbsp;⌘,</div>
+                  </div>
+                  <div class="action-arrow">›</div>
+                </div>
+                <div class="action-card" data-action="open-personalities">
+                  <div class="action-icon action-icon-rose">👤</div>
+                  <div class="action-text">
+                    <div class="action-title">Personalities</div>
+                    <div class="action-desc">Manage email identities</div>
+                  </div>
+                  <div class="action-arrow">›</div>
+                </div>
+                <div class="action-card" data-action="open-stats">
+                  <div class="action-icon action-icon-cyan">📊</div>
+                  <div class="action-text">
+                    <div class="action-title">Statistics</div>
+                    <div class="action-desc">View mail usage statistics</div>
+                  </div>
+                  <div class="action-arrow">›</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Tip Bar -->
+          <div class="tip-bar">
+            <span class="tip-icon">💡</span>
+            <span class="tip-text"><b>Tip:</b> Click any mailbox in the sidebar or stat card to open it in a tab. You can close tabs with the <b>×</b> button anytime.</span>
+          </div>
+        </div>
+      </div><!-- /page-welcome -->
+
       <!-- ===== Page: Mailbox View (In / Selected Mailbox) ===== -->
-      <div class="page active" id="page-in">
+      <div class="page" id="page-in">
 
         <!-- Message list -->
         <div class="msg-list-wrap">
@@ -1128,6 +1468,19 @@
   </div>
 
 </div><!-- /app -->
+
+<!-- Context Menu -->
+<div id="mailbox-ctx-menu" class="ctx-menu">
+  <div class="ctx-item" data-ctx-action="open">📂 Open in Tab</div>
+  <div class="ctx-sep"></div>
+  <div class="ctx-item" data-ctx-action="new-mailbox">➕ New Mailbox</div>
+  <div class="ctx-item" data-ctx-action="new-folder">📁 New Folder</div>
+  <div class="ctx-sep"></div>
+  <div class="ctx-item" data-ctx-action="rename">✏ Rename</div>
+  <div class="ctx-item" data-ctx-action="delete">🗑 Delete</div>
+  <div class="ctx-item" data-ctx-action="empty-trash">🧹 Empty Trash</div>
+  <div class="ctx-item" data-ctx-action="compact">⚡ Compact Mailbox</div>
+</div>
 
 </body>
 </html>

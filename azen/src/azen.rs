@@ -16,13 +16,26 @@ enum Skin {
     Settings,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum EudoraTab {
-    In,
-    Out,
+#[derive(Clone, PartialEq, Eq, Debug)]
+enum TabKind {
+    Welcome,
+    Mailbox(String),
     Contacts,
     Filters,
     Compose,
+}
+
+fn mailbox_icon(name: &str) -> &'static str {
+    match name.to_ascii_lowercase().as_str() {
+        "in" => "📥",
+        "out" => "📤",
+        "drafts" => "📝",
+        "sent" => "📨",
+        "trash" => "🗑",
+        "junk" | "spam" => "⛔",
+        "archive" => "📦",
+        _ => "📂",
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -144,7 +157,8 @@ struct AppState {
     selected_in_msg_id: usize,
     selected_out_msg_id: usize,
     selected_contact_idx: usize,
-    eudora_tab: EudoraTab,
+    open_tabs: Vec<TabKind>,
+    active_tab_index: usize,
     email_mode: EmailViewMode,
     compose_open: bool,
     compose: ComposeDraft,
@@ -153,6 +167,14 @@ struct AppState {
     status_left: String,
     status_center: String,
     status_right: String,
+
+    // Store, collapsible tree, and context menu state
+    store: macmbx::store::Store,
+    expanded_folders: std::collections::HashSet<String>,
+    ctx_menu_open: bool,
+    ctx_menu_pos: (f32, f32),
+    ctx_target: Option<String>,
+    ctx_target_is_folder: bool,
 }
 
 const AVATAR_COLORS: &[&str] = &[
@@ -438,12 +460,30 @@ fn seed_store_if_needed(data_dir: &Path) {
             let _ = trash_toc.save();
         }
 
-        for mb in &["Junk", "Sent", "Archive", "Work", "Personal"] {
+        for mb in &["Junk", "Sent", "Archive"] {
             let p = mailboxes_dir.join(mb);
             if !p.exists() {
                 let _ = macmbx::toc::Toc::open_or_create(&p);
             }
         }
+
+        let work_dir = mailboxes_dir.join("Work");
+        if work_dir.is_file() {
+            let _ = std::fs::remove_file(&work_dir);
+            let _ = std::fs::remove_file(mailboxes_dir.join("Work.toc"));
+        }
+        let _ = std::fs::create_dir_all(&work_dir);
+        let _ = macmbx::toc::Toc::open_or_create(&work_dir.join("Projects"));
+        let _ = macmbx::toc::Toc::open_or_create(&work_dir.join("Notes"));
+
+        let personal_dir = mailboxes_dir.join("Personal");
+        if personal_dir.is_file() {
+            let _ = std::fs::remove_file(&personal_dir);
+            let _ = std::fs::remove_file(mailboxes_dir.join("Personal.toc"));
+        }
+        let _ = std::fs::create_dir_all(&personal_dir);
+        let _ = macmbx::toc::Toc::open_or_create(&personal_dir.join("Family"));
+        let _ = macmbx::toc::Toc::open_or_create(&personal_dir.join("Receipts"));
     }
 
     let standard_nicks = nick_dir.join("Standard.txt");
@@ -483,49 +523,80 @@ POPAccount=you@example.com
     }
 }
 
+fn collect_store_mailboxes(
+    nodes: &[macmbx::store::Node],
+    mailboxes: &mut Vec<Mailbox>,
+    mailbox_paths: &mut Vec<(String, PathBuf)>,
+) {
+    for node in nodes {
+        match node.node_type {
+            macmbx::store::NodeType::Mailbox => {
+                let icon = mailbox_icon(&node.name);
+                let show_in_email_skin = matches!(
+                    node.name.as_str(),
+                    "In" | "Out" | "Drafts" | "Trash" | "Spam" | "Junk" | "Archive"
+                );
+                mailboxes.push(Mailbox {
+                    name: node.name.clone(),
+                    email_label: if node.name == "In" {
+                        "Inbox".to_string()
+                    } else if node.name == "Out" {
+                        "Sent".to_string()
+                    } else {
+                        node.name.clone()
+                    },
+                    icon,
+                    indent: 0,
+                    has_children: false,
+                    separator_after: node.name == "Trash",
+                    show_in_email_skin,
+                });
+                mailbox_paths.push((node.name.clone(), node.path.clone()));
+            }
+            macmbx::store::NodeType::Folder => {
+                collect_store_mailboxes(&node.children, mailboxes, mailbox_paths);
+            }
+        }
+    }
+}
+
 fn load_macmbx_data(
     data_dir: &Path,
     _conf: &macmbx::conf::Conf,
-) -> (Vec<Mailbox>, Vec<MailMessage>, Vec<Contact>, Vec<MailFilter>) {
+) -> (macmbx::store::Store, Vec<Mailbox>, Vec<MailMessage>, Vec<Contact>, Vec<MailFilter>) {
     let mailboxes_dir = data_dir.join("mailboxes");
+    let store = macmbx::store::Store::open(&mailboxes_dir)
+        .unwrap_or_else(|_| macmbx::store::Store::open(data_dir).unwrap());
 
-    let mut mailboxes = vec![
-        Mailbox { name: "In".to_string(),            email_label: "Inbox".to_string(),   icon: "📥", indent: 0, has_children: false, separator_after: false, show_in_email_skin: true },
-        Mailbox { name: "Out".to_string(),           email_label: "Sent".to_string(),    icon: "📤", indent: 0, has_children: false, separator_after: false, show_in_email_skin: true },
-        Mailbox { name: "Drafts".to_string(),        email_label: "Drafts".to_string(),  icon: "📝", indent: 0, has_children: false, separator_after: false, show_in_email_skin: true },
-        Mailbox { name: "Sent".to_string(),          email_label: "Sent".to_string(),    icon: "📨", indent: 0, has_children: false, separator_after: false, show_in_email_skin: false },
-        Mailbox { name: "Archive".to_string(),       email_label: "Archive".to_string(), icon: "📦", indent: 0, has_children: false, separator_after: false, show_in_email_skin: true },
-        Mailbox { name: "Spam".to_string(),          email_label: "Spam".to_string(),    icon: "⛔", indent: 0, has_children: false, separator_after: false, show_in_email_skin: true },
-        Mailbox { name: "Trash".to_string(),         email_label: "Trash".to_string(),   icon: "🗑", indent: 0, has_children: false, separator_after: true,  show_in_email_skin: true },
-        Mailbox { name: "Work".to_string(),          email_label: "Work".to_string(),    icon: "📁", indent: 0, has_children: false, separator_after: false, show_in_email_skin: false },
-        Mailbox { name: "Personal".to_string(),      email_label: "Personal".to_string(),icon: "📁", indent: 0, has_children: false, separator_after: true,  show_in_email_skin: false },
-    ];
+    let mut mailboxes = Vec::new();
+    let mut mailbox_paths = Vec::new();
+    collect_store_mailboxes(store.children(), &mut mailboxes, &mut mailbox_paths);
 
-    if let Ok(entries) = std::fs::read_dir(&mailboxes_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_file() && path.extension().and_then(|e| e.to_str()) != Some("toc") {
-                if let Some(file_name) = path.file_name().and_then(|f| f.to_str()) {
-                    if !mailboxes.iter().any(|m| m.name.eq_ignore_ascii_case(file_name)) {
-                        mailboxes.push(Mailbox {
-                            name: file_name.to_string(),
-                            email_label: file_name.to_string(),
-                            icon: "📂",
-                            indent: 0,
-                            has_children: false,
-                            separator_after: false,
-                            show_in_email_skin: false,
-                        });
-                    }
-                }
-            }
+    for std_name in &["In", "Out", "Drafts", "Sent", "Archive", "Spam", "Trash"] {
+        if !mailboxes.iter().any(|m| m.name.eq_ignore_ascii_case(std_name)) {
+            let icon = mailbox_icon(std_name);
+            mailboxes.push(Mailbox {
+                name: std_name.to_string(),
+                email_label: if *std_name == "In" {
+                    "Inbox".to_string()
+                } else if *std_name == "Out" {
+                    "Sent".to_string()
+                } else {
+                    std_name.to_string()
+                },
+                icon,
+                indent: 0,
+                has_children: false,
+                separator_after: *std_name == "Trash",
+                show_in_email_skin: true,
+            });
+            mailbox_paths.push((std_name.to_string(), mailboxes_dir.join(std_name)));
         }
     }
 
     let mut messages = Vec::new();
-    for mb in &mailboxes {
-        let mb_path = mailboxes_dir.join(&mb.name);
-        if let Ok(toc) = macmbx::toc::Toc::open_or_create(&mb_path) {
+    for (mb_name, mb_path) in &mailbox_paths {
+        if let Ok(toc) = macmbx::toc::Toc::open_or_create(mb_path) {
             for (i, sum) in toc.msgs.iter().enumerate() {
                 let raw = macmbx::ops::read_message(&toc, i).unwrap_or_default();
                 let parsed = crispy::msg::parse(&raw);
@@ -608,11 +679,11 @@ fn load_macmbx_data(
 
                 let avatar_initials = compute_initials(&from);
                 let avatar_color = compute_avatar_color(&from);
-                let id = (mb_name_hash(&mb.name) * 1000) + i + 1;
+                let id = (mb_name_hash(mb_name) * 1000) + i + 1;
 
                 messages.push(MailMessage {
                     id,
-                    mailbox: mb.name.clone(),
+                    mailbox: mb_name.clone(),
                     from,
                     to,
                     cc,
@@ -687,7 +758,7 @@ fn load_macmbx_data(
         filters = default_seed_filters();
     }
 
-    (mailboxes, messages, contacts, filters)
+    (store, mailboxes, messages, contacts, filters)
 }
 
 impl AppState {
@@ -697,7 +768,7 @@ impl AppState {
         let conf = macmbx::conf::Conf::load(data_dir.join("geudora.ini"))
             .unwrap_or_else(|_| macmbx::conf::Conf::new());
 
-        let (mailboxes, messages, contacts, filters) = load_macmbx_data(&data_dir, &conf);
+        let (store, mailboxes, messages, contacts, filters) = load_macmbx_data(&data_dir, &conf);
 
         let labels = vec![
             LabelDef { name: "Work",     color: "#5b5fc7", bg_rgba: "rgba(91,95,199,0.15)" },
@@ -1128,6 +1199,16 @@ impl AppState {
         let in_unread = messages.iter().filter(|m| m.mailbox == "In" && m.unread).count();
         let in_total = messages.iter().filter(|m| m.mailbox == "In").count();
 
+        let mut expanded_folders = std::collections::HashSet::new();
+        expanded_folders.insert("Work".to_string());
+        expanded_folders.insert("Personal".to_string());
+
+        let open_tabs = vec![
+            TabKind::Welcome,
+            TabKind::Mailbox("In".to_string()),
+        ];
+        let active_tab_index = 0;
+
         Self {
             skin: Skin::Eudora,
             last_mail_skin: Skin::Eudora,
@@ -1146,20 +1227,74 @@ impl AppState {
             selected_in_msg_id,
             selected_out_msg_id,
             selected_contact_idx: 0,
-            eudora_tab: EudoraTab::In,
+            open_tabs,
+            active_tab_index,
             email_mode: EmailViewMode::Mail,
             compose_open: false,
             compose: ComposeDraft::default(),
             settings_category: "getting_started".to_string(),
             settings_status: "Ready — All 21 classic Eudora configuration panels loaded.".to_string(),
-            status_left: format!("In — {} messages, {} unread", in_total, in_unread),
+            status_left: format!("Welcome — {} messages, {} unread", in_total, in_unread),
             status_center: "IMAP Idle".to_string(),
             status_right: "Connected to mail.example.com".to_string(),
+            store,
+            expanded_folders,
+            ctx_menu_open: false,
+            ctx_menu_pos: (0.0, 0.0),
+            ctx_target: None,
+            ctx_target_is_folder: false,
+        }
+    }
+
+    fn active_tab(&self) -> TabKind {
+        self.open_tabs.get(self.active_tab_index).cloned().unwrap_or(TabKind::Welcome)
+    }
+
+    fn open_tab(&mut self, tab: TabKind) {
+        if let Some(pos) = self.open_tabs.iter().position(|t| *t == tab) {
+            self.active_tab_index = pos;
+        } else {
+            self.open_tabs.push(tab.clone());
+            self.active_tab_index = self.open_tabs.len() - 1;
+        }
+        if let TabKind::Mailbox(ref mb) = tab {
+            self.selected_mailbox = mb.clone();
+            self.ensure_valid_selection();
+        }
+        self.dirty = true;
+    }
+
+    fn close_tab(&mut self, idx: usize) {
+        if self.open_tabs.len() <= 1 {
+            self.open_tabs = vec![TabKind::Welcome];
+            self.active_tab_index = 0;
+            self.dirty = true;
+            return;
+        }
+        if idx < self.open_tabs.len() {
+            self.open_tabs.remove(idx);
+            if self.active_tab_index >= self.open_tabs.len() {
+                self.active_tab_index = self.open_tabs.len() - 1;
+            } else if self.active_tab_index >= idx && self.active_tab_index > 0 {
+                self.active_tab_index -= 1;
+            }
+            if let Some(TabKind::Mailbox(mb)) = self.open_tabs.get(self.active_tab_index) {
+                self.selected_mailbox = mb.clone();
+                self.ensure_valid_selection();
+            }
+            self.dirty = true;
+        }
+    }
+
+    fn close_tab_if_open(&mut self, tab: &TabKind) {
+        if let Some(pos) = self.open_tabs.iter().position(|t| t == tab) {
+            self.close_tab(pos);
         }
     }
 
     fn reload_from_disk(&mut self) {
-        let (mailboxes, messages, contacts, filters) = load_macmbx_data(&self.data_dir, &self.conf);
+        let (store, mailboxes, messages, contacts, filters) = load_macmbx_data(&self.data_dir, &self.conf);
+        self.store = store;
         self.mailboxes = mailboxes;
         self.messages = messages;
         self.contacts = contacts;
@@ -1172,9 +1307,8 @@ impl AppState {
             self.selected_out_msg_id = self.messages.iter().find(|m| m.mailbox == "Out").map(|m| m.id).unwrap_or(0);
         }
 
-        let in_unread = self.unread_count("In");
-        let in_total = self.messages.iter().filter(|m| m.mailbox == "In").count();
-        self.status_left = format!("In — {} messages, {} unread", in_total, in_unread);
+        self.ensure_valid_selection();
+        self.update_status_bar();
         self.dirty = true;
     }
 
@@ -1207,7 +1341,8 @@ impl AppState {
         self.reload_from_disk();
         self.compose = ComposeDraft::default();
         self.compose_open = false;
-        self.eudora_tab = EudoraTab::Out;
+        self.close_tab_if_open(&TabKind::Compose);
+        self.open_tab(TabKind::Mailbox("Out".to_string()));
         self.email_mode = EmailViewMode::Mail;
         self.status_left = "Message queued in Out mailbox".to_string();
         self.dirty = true;
@@ -1316,11 +1451,7 @@ impl AppState {
     }
 
     fn ensure_valid_selection(&mut self) {
-        let active_box = if self.skin == Skin::Eudora && self.eudora_tab == EudoraTab::Out {
-            "Out".to_string()
-        } else {
-            self.selected_mailbox.clone()
-        };
+        let active_box = self.selected_mailbox.clone();
 
         let visible_ids: Vec<usize> = self
             .visible_messages_for_mailbox(&active_box)
@@ -1342,32 +1473,39 @@ impl AppState {
     }
 
     fn update_status_bar(&mut self) {
-        match self.eudora_tab {
-            EudoraTab::In => {
-                let total = self.visible_messages_for_mailbox(&self.selected_mailbox).len();
-                let unread = self.unread_count(&self.selected_mailbox);
-                self.status_left = format!("{} — {} messages, {} unread", self.selected_mailbox, total, unread);
-                self.status_center = "IMAP Idle".to_string();
+        match self.active_tab() {
+            TabKind::Welcome => {
+                let total = self.messages.len();
+                let unread = self.messages.iter().filter(|m| m.unread).count();
+                self.status_left = format!("Welcome — {} total messages, {} unread", total, unread);
+                self.status_center = "IMAP / POP3 Idle".to_string();
                 self.status_right = "Connected to mail.example.com".to_string();
             }
-            EudoraTab::Out => {
+            TabKind::Mailbox(ref mb) if mb == "Out" => {
                 let total = self.visible_messages_for_mailbox("Out").len();
                 self.status_left = format!("Out — {} messages", total);
                 self.status_center = "SMTP Ready".to_string();
                 self.status_right = "Connected to mail.example.com".to_string();
             }
-            EudoraTab::Contacts => {
+            TabKind::Mailbox(ref mb) => {
+                let total = self.visible_messages_for_mailbox(mb).len();
+                let unread = self.unread_count(mb);
+                self.status_left = format!("{} — {} messages, {} unread", mb, total, unread);
+                self.status_center = "IMAP Idle".to_string();
+                self.status_right = "Connected to mail.example.com".to_string();
+            }
+            TabKind::Contacts => {
                 self.status_left = format!("Contacts — {} people", self.contacts.len());
                 self.status_center = "Address Book".to_string();
                 self.status_right = String::new();
             }
-            EudoraTab::Filters => {
+            TabKind::Filters => {
                 let active = self.filters.iter().filter(|f| f.enabled).count();
                 self.status_left = format!("Filters — {} rules ({} active)", self.filters.len(), active);
                 self.status_center = String::new();
                 self.status_right = String::new();
             }
-            EudoraTab::Compose => {
+            TabKind::Compose => {
                 self.status_left = "Composing message...".to_string();
                 self.status_center = "Draft".to_string();
                 self.status_right = String::new();
@@ -1582,12 +1720,92 @@ fn render_eudora_all(doc: &mut Document, state: &mut AppState) {
     sync_theme_and_mode(doc, state.skin, state.last_mail_skin, state.dark_mode);
     render_eudora_mailboxes(doc, state);
     render_eudora_tabs(doc, state);
+    render_eudora_welcome(doc, state);
     render_eudora_in_page(doc, state);
     render_eudora_out_page(doc, state);
     render_eudora_contacts(doc, state);
     render_eudora_filters(doc, state);
     render_eudora_compose(doc, state);
+    render_eudora_context_menu(doc, state);
     render_eudora_statusbar(doc, state);
+}
+
+fn render_tree_node(
+    node: &macmbx::store::Node,
+    depth: usize,
+    state: &AppState,
+    html: &mut String,
+) {
+    let rel = node
+        .path
+        .strip_prefix(state.data_dir.join("mailboxes"))
+        .unwrap_or(&node.path)
+        .to_string_lossy()
+        .to_string();
+
+    match node.node_type {
+        macmbx::store::NodeType::Folder => {
+            let is_expanded = state.expanded_folders.contains(&rel) || state.expanded_folders.contains(&node.name);
+            let arrow = if is_expanded { "▾" } else { "▸" };
+            let depth_cls = match depth {
+                0 => "",
+                1 => " depth-1",
+                2 => " depth-2",
+                _ => " depth-3",
+            };
+            html.push_str(&format!(
+                r#"<div class="wazoo-item{depth_cls}" data-folder="{rel}">
+                    <span class="wazoo-expand" data-toggle-folder="{rel}">{arrow}</span>
+                    <span class="wazoo-icon">📁</span>
+                    <span class="wazoo-name" data-toggle-folder="{rel}">{name}</span>
+                    <span class="wazoo-menu-btn" data-ctx-menu="{rel}" data-is-folder="true" title="Folder actions">⋯</span>
+                </div>"#,
+                name = escape_html(&node.name),
+            ));
+            if is_expanded {
+                for child in &node.children {
+                    render_tree_node(child, depth + 1, state, html);
+                }
+            }
+        }
+        macmbx::store::NodeType::Mailbox => {
+            let unread = state.unread_count(&node.name);
+            let is_selected = state.selected_mailbox == node.name && match state.active_tab() {
+                TabKind::Mailbox(ref m) => m == &node.name,
+                _ => false,
+            };
+            let mut classes = String::from("wazoo-item");
+            if depth == 1 {
+                classes.push_str(" depth-1");
+            } else if depth == 2 {
+                classes.push_str(" depth-2");
+            } else if depth >= 3 {
+                classes.push_str(" depth-3");
+            }
+            if is_selected {
+                classes.push_str(" selected");
+            }
+            let icon = mailbox_icon(&node.name);
+            let badge_html = if unread > 0 {
+                format!(r#"<span class="wazoo-badge">{unread}</span>"#)
+            } else {
+                String::new()
+            };
+            html.push_str(&format!(
+                r#"<div class="{classes}" data-mailbox="{name}">
+                    <span class="wazoo-expand"></span>
+                    <span class="wazoo-icon">{icon}</span>
+                    <span class="wazoo-name">{name}</span>
+                    {badge_html}
+                    <span class="wazoo-menu-btn" data-ctx-menu="{name}" data-is-folder="false" title="Mailbox actions">⋯</span>
+                </div>"#,
+                name = escape_html(&node.name),
+            ));
+            if node.name == "Trash" {
+                html.push_str(r#"<div class="wazoo-item sep"></div>"#);
+            }
+        }
+    }
 }
 
 fn render_eudora_mailboxes(doc: &mut Document, state: &AppState) {
@@ -1595,105 +1813,144 @@ fn render_eudora_mailboxes(doc: &mut Document, state: &AppState) {
         return;
     };
     let mut html = String::new();
-    for mb in &state.mailboxes {
-        let unread = state.unread_count(&mb.name);
-        let is_selected = match state.eudora_tab {
-            EudoraTab::In => state.selected_mailbox == mb.name,
-            EudoraTab::Out => mb.name == "Out",
-            _ => false,
-        };
-        let mut classes = String::from("wazoo-item");
-        if mb.indent == 1 {
-            classes.push_str(" depth-1");
-        } else if mb.indent >= 2 {
-            classes.push_str(" depth-2");
-        }
-        if is_selected {
-            classes.push_str(" selected");
-        }
-
-        let expand_html = if mb.has_children {
-            r#"<span class="wazoo-expand">▾</span>"#
-        } else {
-            ""
-        };
-        let badge_html = if unread > 0 {
-            format!(r#"<span class="wazoo-badge">{unread}</span>"#)
-        } else {
-            String::new()
-        };
-
-        html.push_str(&format!(
-            r#"<div class="{classes}" data-mailbox="{name}">{expand_html}<span class="wazoo-icon">{icon}</span><span class="wazoo-name">{name}</span>{badge_html}</div>"#,
-            name = escape_html(&mb.name),
-            icon = mb.icon,
-        ));
-        if mb.separator_after {
-            html.push_str(r#"<div class="wazoo-item sep"></div>"#);
-        }
+    for node in state.store.children() {
+        render_tree_node(node, 0, state, &mut html);
     }
     set_inner_html_indexed(doc, tree, &html);
 }
 
 fn render_eudora_tabs(doc: &mut Document, state: &AppState) {
-    let tab_ids = [
-        ("tab-in", EudoraTab::In),
-        ("tab-out", EudoraTab::Out),
-        ("tab-contacts", EudoraTab::Contacts),
-        ("tab-filters", EudoraTab::Filters),
-        ("compose-tab", EudoraTab::Compose),
-    ];
-    for (id, tab) in tab_ids {
-        if let Some(el) = doc.get_element_by_id(id) {
-            if state.eudora_tab == tab {
-                doc.class_list_add(el, "selected");
-            } else {
-                doc.class_list_remove(el, "selected");
-            }
-        }
-    }
-
-    if let Some(tab_in) = doc.get_element_by_id("tab-in") {
-        let icon = state
-            .mailboxes
-            .iter()
-            .find(|m| m.name == state.selected_mailbox)
-            .map(|m| m.icon)
-            .unwrap_or("📥");
-        let label_name = if state.selected_mailbox == "Out" {
-            "In"
-        } else {
-            state.selected_mailbox.as_str()
+    let Some(tabbar) = doc.get_element_by_id("tabbar") else {
+        return;
+    };
+    let mut html = String::new();
+    for (idx, tab) in state.open_tabs.iter().enumerate() {
+        let is_selected = idx == state.active_tab_index;
+        let sel_cls = if is_selected { " selected" } else { "" };
+        let (icon, title) = match tab {
+            TabKind::Welcome => ("🏠", "Welcome".to_string()),
+            TabKind::Mailbox(name) => (mailbox_icon(name), name.clone()),
+            TabKind::Contacts => ("👥", "Contacts".to_string()),
+            TabKind::Filters => ("📋", "Filters".to_string()),
+            TabKind::Compose => ("✏", "New Message".to_string()),
         };
-        doc.set_text_content(tab_in, &format!("{icon} {label_name}"));
+        html.push_str(&format!(
+            r#"<div class="tab{sel_cls}" data-tab-idx="{idx}">
+                <span class="tab-label">{icon} {title}</span>
+                <span class="tab-close" data-tab-close="{idx}" title="Close tab">×</span>
+            </div>"#,
+            title = escape_html(&title)
+        ));
     }
+    set_inner_html_indexed(doc, tabbar, &html);
 
-    if let Some(comp_tab) = doc.get_element_by_id("compose-tab") {
-        doc.set_style_property(
-            comp_tab,
-            "display",
-            if state.compose_open { "flex" } else { "none" },
-        );
-    }
-    if let Some(comp_lbl) = doc.get_element_by_id("compose-tab-label") {
-        doc.set_text_content(comp_lbl, &state.compose.title);
-    }
-
-    let page_ids = [
-        ("page-in", EudoraTab::In),
-        ("page-out", EudoraTab::Out),
-        ("page-contacts", EudoraTab::Contacts),
-        ("page-filters", EudoraTab::Filters),
-        ("page-compose", EudoraTab::Compose),
+    let active_tab = state.active_tab();
+    let page_map = [
+        ("page-welcome", matches!(active_tab, TabKind::Welcome)),
+        ("page-in", matches!(active_tab, TabKind::Mailbox(ref m) if m != "Out")),
+        ("page-out", matches!(active_tab, TabKind::Mailbox(ref m) if m == "Out")),
+        ("page-contacts", matches!(active_tab, TabKind::Contacts)),
+        ("page-filters", matches!(active_tab, TabKind::Filters)),
+        ("page-compose", matches!(active_tab, TabKind::Compose)),
     ];
-    for (id, tab) in page_ids {
-        if let Some(el) = doc.get_element_by_id(id) {
-            if state.eudora_tab == tab {
+    for (page_id, is_active) in page_map {
+        if let Some(el) = doc.get_element_by_id(page_id) {
+            if is_active {
                 doc.class_list_add(el, "active");
             } else {
                 doc.class_list_remove(el, "active");
             }
         }
+    }
+}
+
+fn render_eudora_welcome(doc: &mut Document, state: &AppState) {
+    if !matches!(state.active_tab(), TabKind::Welcome) {
+        return;
+    }
+    let real_name = state.conf.get("sending_mail", "real_name")
+        .or_else(|| state.conf.get("Settings", "RealName"))
+        .unwrap_or("Steve Dorner");
+    let first_name = real_name.split_whitespace().next().unwrap_or("there");
+
+    let hour = {
+        let now_ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        let (_, _, _, hour, _) = macmbx::calendar::split_ts(now_ts);
+        hour
+    };
+    let tod = if hour < 12 {
+        "Good morning"
+    } else if hour < 17 {
+        "Good afternoon"
+    } else {
+        "Good evening"
+    };
+    let greeting = format!("{}, {}", tod, first_name);
+    set_text_by_id(doc, "welcome-greeting", &greeting);
+
+    let email = state.conf.get("sending_mail", "email_address")
+        .or_else(|| state.conf.get("Settings", "ReturnAddress"))
+        .unwrap_or("you@example.com");
+    let server = state.conf.get("checking_mail", "pop_server")
+        .or_else(|| state.conf.get("Settings", "MailServer"))
+        .unwrap_or("mail.example.com");
+    let use_imap = state.conf.get_bool("checking_mail", "use_imap", false);
+    let use_ssl = state.conf.get_bool("ssl", "use_ssl", false);
+    let proto = if use_imap { "IMAP" } else { "POP3" };
+    let ssl_str = if use_ssl { " • SSL" } else { "" };
+    let acct_line = format!("{} • {} • {}{}",
+        if email.is_empty() { "No email configured" } else { email },
+        proto,
+        server,
+        ssl_str
+    );
+    set_text_by_id(doc, "welcome-account-line", &acct_line);
+
+    let Some(stat_grid) = doc.get_element_by_id("welcome-stat-grid") else {
+        return;
+    };
+    let in_count = state.messages.iter().filter(|m| m.mailbox == "In").count();
+    let out_count = state.messages.iter().filter(|m| m.mailbox == "Out").count();
+    let junk_count = state.messages.iter().filter(|m| m.mailbox == "Spam" || m.mailbox == "Junk").count();
+    let trash_count = state.messages.iter().filter(|m| m.mailbox == "Trash").count();
+
+    let junk_name = if state.messages.iter().any(|m| m.mailbox == "Junk") {
+        "Junk"
+    } else {
+        "Spam"
+    };
+
+    let stats = [
+        ("In", "Inbox", in_count, "stat-accent-blue"),
+        ("Out", "Outbox", out_count, "stat-accent-green"),
+        (junk_name, "Junk", junk_count, "stat-accent-amber"),
+        ("Trash", "Trash", trash_count, "stat-accent-red"),
+    ];
+    let mut stats_html = String::new();
+    for (mbox, label, count, accent) in stats {
+        stats_html.push_str(&format!(
+            r#"<div class="stat-card {accent}" data-open-mailbox="{mbox}" title="Open {label}">
+                <div class="stat-number">{count}</div>
+                <div class="stat-label">{label}</div>
+            </div>"#
+        ));
+    }
+    set_inner_html_indexed(doc, stat_grid, &stats_html);
+}
+
+fn render_eudora_context_menu(doc: &mut Document, state: &AppState) {
+    let Some(menu) = doc.get_element_by_id("mailbox-ctx-menu") else {
+        return;
+    };
+    if state.ctx_menu_open {
+        doc.set_style_property(menu, "display", "block");
+        doc.set_style_property(menu, "left", &format!("{}px", state.ctx_menu_pos.0.max(10.0)));
+        doc.set_style_property(menu, "top", &format!("{}px", state.ctx_menu_pos.1.max(10.0)));
+    } else {
+        doc.set_style_property(menu, "display", "none");
     }
 }
 
@@ -1817,6 +2074,11 @@ fn render_eudora_in_page(doc: &mut Document, state: &AppState) {
         state.selected_mailbox.as_str()
     };
     let visible = state.visible_messages_for_mailbox(mailbox);
+
+    if let Some(who_hdr) = doc.get_element_by_id("in-who-header") {
+        let is_outgoing = mailbox == "Sent" || mailbox == "Out";
+        doc.set_text_content(who_hdr, if is_outgoing { "To" } else { "Who" });
+    }
 
     render_eudora_rows_dom(doc, "inbox-rows", &visible, false, state.selected_in_msg_id);
 
@@ -2504,19 +2766,230 @@ fn render_active_skin(doc: &mut Document, state: &mut AppState) {
 
 fn register_listeners(doc: &mut Document, state: Arc<Mutex<AppState>>) {
     let root = doc.root.node_id;
+    let state_click = state.clone();
     doc.add_event_listener(
         root,
         "click",
         Box::new(move |evt, doc| {
-            let mut st = state.lock().unwrap();
+            let mut st = state_click.lock().unwrap();
             handle_click(doc, evt.target, &mut st);
+        }),
+        ListenerOptions::default(),
+    );
+
+    let state_ctx = state;
+    doc.add_event_listener(
+        root,
+        "contextmenu",
+        Box::new(move |evt, doc| {
+            let mut st = state_ctx.lock().unwrap();
+            handle_contextmenu(doc, evt, &mut st);
         }),
         ListenerOptions::default(),
     );
 }
 
+fn handle_contextmenu(
+    doc: &mut Document,
+    evt: &webcore::dom::events::DomEvent,
+    state: &mut AppState,
+) {
+    if let Some(target_el) = doc.closest(evt.target, "[data-mailbox]") {
+        if let Some(name) = doc.get_attribute(target_el, "data-mailbox") {
+            state.ctx_target = Some(name);
+            state.ctx_target_is_folder = false;
+            state.ctx_menu_open = true;
+            state.ctx_menu_pos = (evt.client_x, evt.client_y);
+            render_active_skin(doc, state);
+            return;
+        }
+    }
+    if let Some(target_el) = doc.closest(evt.target, "[data-folder]") {
+        if let Some(path) = doc.get_attribute(target_el, "data-folder") {
+            state.ctx_target = Some(path);
+            state.ctx_target_is_folder = true;
+            state.ctx_menu_open = true;
+            state.ctx_menu_pos = (evt.client_x, evt.client_y);
+            render_active_skin(doc, state);
+        }
+    }
+}
+
 fn handle_click(doc: &mut Document, target: u32, state: &mut AppState) {
-    // 0. Check settings category sidebar selection
+    // 0. Context menu actions
+    if let Some(action_el) = doc.closest(target, "[data-ctx-action]") {
+        if let Some(action) = doc.get_attribute(action_el, "data-ctx-action") {
+            state.ctx_menu_open = false;
+            match action.as_str() {
+                "open" => {
+                    if let Some(target_mb) = &state.ctx_target {
+                        if !state.ctx_target_is_folder {
+                            state.open_tab(TabKind::Mailbox(target_mb.clone()));
+                        }
+                    }
+                }
+                "new-mailbox" => {
+                    let mut name = "New Mailbox".to_string();
+                    let mut i = 1;
+                    let mb_dir = state.data_dir.join("mailboxes");
+                    while mb_dir.join(&name).exists() {
+                        i += 1;
+                        name = format!("New Mailbox {}", i);
+                    }
+                    let parent = if state.ctx_target_is_folder {
+                        state.ctx_target.as_deref()
+                    } else {
+                        None
+                    };
+                    let _ = state.store.create_mailbox(parent, &name);
+                    state.reload_from_disk();
+                    state.open_tab(TabKind::Mailbox(name));
+                }
+                "new-folder" => {
+                    let mut name = "New Folder".to_string();
+                    let mut i = 1;
+                    let mb_dir = state.data_dir.join("mailboxes");
+                    while mb_dir.join(&name).exists() {
+                        i += 1;
+                        name = format!("New Folder {}", i);
+                    }
+                    let parent = if state.ctx_target_is_folder {
+                        state.ctx_target.as_deref()
+                    } else {
+                        None
+                    };
+                    let _ = state.store.create_folder(parent, &name);
+                    state.expanded_folders.insert(name.clone());
+                    state.reload_from_disk();
+                }
+                "rename" => {
+                    if let Some(target_mb) = &state.ctx_target {
+                        if !["In", "Out", "Trash", "Junk", "Drafts"].iter().any(|s| s.eq_ignore_ascii_case(target_mb)) {
+                            let new_name = format!("{}_renamed", target_mb);
+                            let _ = state.store.rename(target_mb, &new_name);
+                            state.reload_from_disk();
+                        }
+                    }
+                }
+                "delete" => {
+                    if let Some(target_mb) = &state.ctx_target {
+                        if !["In", "Out", "Trash", "Junk", "Drafts"].iter().any(|s| s.eq_ignore_ascii_case(target_mb)) {
+                            let _ = state.store.delete(target_mb);
+                            state.reload_from_disk();
+                        }
+                    }
+                }
+                "compact" => {
+                    if let Some(target_mb) = &state.ctx_target {
+                        let mbox_path = state.data_dir.join("mailboxes").join(target_mb);
+                        if let Ok(mut toc) = macmbx::toc::Toc::open_or_create(&mbox_path) {
+                            let _ = macmbx::compact::compact(&mut toc);
+                            let _ = toc.save();
+                            state.status_left = format!("Compacted mailbox {}", target_mb);
+                        }
+                    }
+                }
+                "empty-trash" => {
+                    let trash_path = state.data_dir.join("mailboxes").join("Trash");
+                    if let Ok(mut toc) = macmbx::toc::Toc::open_or_create(&trash_path) {
+                        toc.msgs.clear();
+                        let _ = toc.save();
+                        state.reload_from_disk();
+                        state.status_left = "Trash emptied".to_string();
+                    }
+                }
+                _ => {}
+            }
+            render_active_skin(doc, state);
+            return;
+        }
+    }
+
+    // Dismiss context menu if it was open
+    if state.ctx_menu_open {
+        state.ctx_menu_open = false;
+        render_active_skin(doc, state);
+        return;
+    }
+
+    // 0.1 Context menu button on mailbox / folder row (⋯)
+    if let Some(btn) = doc.closest(target, "[data-ctx-menu]") {
+        if let Some(name) = doc.get_attribute(btn, "data-ctx-menu") {
+            let is_folder = doc.get_attribute(btn, "data-is-folder").as_deref() == Some("true");
+            state.ctx_target = Some(name);
+            state.ctx_target_is_folder = is_folder;
+            state.ctx_menu_open = true;
+            state.ctx_menu_pos = (180.0, 150.0);
+            render_active_skin(doc, state);
+            return;
+        }
+    }
+
+    // 0.2 Folder expand/collapse toggle
+    if let Some(toggle) = doc.closest(target, "[data-toggle-folder]") {
+        if let Some(path) = doc.get_attribute(toggle, "data-toggle-folder") {
+            if state.expanded_folders.contains(&path) {
+                state.expanded_folders.remove(&path);
+            } else {
+                state.expanded_folders.insert(path);
+            }
+            render_active_skin(doc, state);
+            return;
+        }
+    }
+
+    // 0.3 Dynamic tab close
+    if let Some(close_btn) = doc.closest(target, "[data-tab-close]") {
+        if let Some(idx_str) = doc.get_attribute(close_btn, "data-tab-close") {
+            if let Ok(idx) = idx_str.parse::<usize>() {
+                state.close_tab(idx);
+                render_active_skin(doc, state);
+                return;
+            }
+        }
+    }
+
+    // 0.4 Dynamic tab select
+    if let Some(tab_btn) = doc.closest(target, "[data-tab-idx]") {
+        if let Some(idx_str) = doc.get_attribute(tab_btn, "data-tab-idx") {
+            if let Ok(idx) = idx_str.parse::<usize>() {
+                if idx < state.open_tabs.len() {
+                    state.active_tab_index = idx;
+                    if let TabKind::Mailbox(ref mb) = state.open_tabs[idx] {
+                        state.selected_mailbox = mb.clone();
+                        state.ensure_valid_selection();
+                    }
+                    render_active_skin(doc, state);
+                    return;
+                }
+            }
+        }
+    }
+
+    // 0.5 Open mailbox (e.g. from Stat Card on Welcome page)
+    if let Some(mb_card) = doc.closest(target, "[data-open-mailbox]") {
+        if let Some(name) = doc.get_attribute(mb_card, "data-open-mailbox") {
+            state.open_tab(TabKind::Mailbox(name));
+            render_active_skin(doc, state);
+            return;
+        }
+    }
+
+    // 0.6 Open tab (e.g. contacts / filters / welcome from Welcome page actions)
+    if let Some(tab_card) = doc.closest(target, "[data-open-tab]") {
+        if let Some(tab_name) = doc.get_attribute(tab_card, "data-open-tab") {
+            match tab_name.as_str() {
+                "contacts" => state.open_tab(TabKind::Contacts),
+                "filters" => state.open_tab(TabKind::Filters),
+                "welcome" => state.open_tab(TabKind::Welcome),
+                _ => {}
+            }
+            render_active_skin(doc, state);
+            return;
+        }
+    }
+
+    // 0.7 Check settings category sidebar selection
     if let Some(cat_el) = doc.closest(target, "[data-settings-cat]") {
         if let Some(cat) = doc.get_attribute(cat_el, "data-settings-cat") {
             state.settings_category = cat;
@@ -2525,10 +2998,11 @@ fn handle_click(doc: &mut Document, target: u32, state: &mut AppState) {
         }
     }
 
-    // 1. Check close button on Compose tab first
+    // 1. Check close button on Compose tab
     if doc.closest(target, ".tab-close").is_some() {
         state.compose_open = false;
-        state.eudora_tab = EudoraTab::In;
+        state.close_tab_if_open(&TabKind::Compose);
+        state.open_tab(TabKind::Mailbox("In".to_string()));
         render_active_skin(doc, state);
         return;
     }
@@ -2603,13 +3077,13 @@ fn handle_click(doc: &mut Document, target: u32, state: &mut AppState) {
                 "new-message" => {
                     state.compose = ComposeDraft::default();
                     state.compose_open = true;
-                    state.eudora_tab = EudoraTab::Compose;
+                    state.open_tab(TabKind::Compose);
                     state.email_mode = EmailViewMode::Compose;
                     render_active_skin(doc, state);
                     return;
                 }
                 "reply" | "reply-all" => {
-                    let active_id = if state.skin == Skin::Eudora && state.eudora_tab == EudoraTab::Out {
+                    let active_id = if state.selected_mailbox == "Out" {
                         state.selected_out_msg_id
                     } else {
                         state.selected_in_msg_id
@@ -2641,7 +3115,7 @@ fn handle_click(doc: &mut Document, target: u32, state: &mut AppState) {
                             ),
                         };
                         state.compose_open = true;
-                        state.eudora_tab = EudoraTab::Compose;
+                        state.open_tab(TabKind::Compose);
                         state.email_mode = EmailViewMode::Compose;
                         render_active_skin(doc, state);
                     }
@@ -2676,14 +3150,14 @@ fn handle_click(doc: &mut Document, target: u32, state: &mut AppState) {
                             ),
                         };
                         state.compose_open = true;
-                        state.eudora_tab = EudoraTab::Compose;
+                        state.open_tab(TabKind::Compose);
                         state.email_mode = EmailViewMode::Compose;
                         render_active_skin(doc, state);
                     }
                     return;
                 }
                 "trash" => {
-                    let active_id = if state.skin == Skin::Eudora && state.eudora_tab == EudoraTab::Out {
+                    let active_id = if state.selected_mailbox == "Out" {
                         state.selected_out_msg_id
                     } else {
                         state.selected_in_msg_id
@@ -2709,7 +3183,7 @@ fn handle_click(doc: &mut Document, target: u32, state: &mut AppState) {
                     return;
                 }
                 "star" => {
-                    let active_id = if state.skin == Skin::Eudora && state.eudora_tab == EudoraTab::Out {
+                    let active_id = if state.selected_mailbox == "Out" {
                         state.selected_out_msg_id
                     } else {
                         state.selected_in_msg_id
@@ -2723,9 +3197,40 @@ fn handle_click(doc: &mut Document, target: u32, state: &mut AppState) {
                     render_active_skin(doc, state);
                     return;
                 }
+                "send-queued" => {
+                    let out_path = state.data_dir.join("mailboxes").join("Out");
+                    if let Ok(mut toc) = macmbx::toc::Toc::open_or_create(&out_path) {
+                        let mut sent_count = 0;
+                        for msg in &mut toc.msgs {
+                            if msg.state == macmbx::toc::State::Queued {
+                                msg.state = macmbx::toc::State::Sent;
+                                sent_count += 1;
+                            }
+                        }
+                        let _ = toc.save();
+                        state.reload_from_disk();
+                        state.status_left = format!("Delivered {} queued messages", sent_count);
+                    }
+                    render_active_skin(doc, state);
+                    return;
+                }
+                "open-personalities" => {
+                    if state.skin != Skin::Settings {
+                        state.last_mail_skin = state.skin;
+                    }
+                    state.settings_category = "personalities".to_string();
+                    state.pending_skin = Some(Skin::Settings);
+                    return;
+                }
+                "open-stats" => {
+                    state.open_tab(TabKind::Welcome);
+                    render_active_skin(doc, state);
+                    return;
+                }
                 "discard" => {
                     state.compose_open = false;
-                    state.eudora_tab = EudoraTab::In;
+                    state.close_tab_if_open(&TabKind::Compose);
+                    state.open_tab(TabKind::Mailbox("In".to_string()));
                     state.email_mode = EmailViewMode::Mail;
                     render_active_skin(doc, state);
                     return;
@@ -2744,43 +3249,14 @@ fn handle_click(doc: &mut Document, target: u32, state: &mut AppState) {
                 ..ComposeDraft::default()
             };
             state.compose_open = true;
-            state.eudora_tab = EudoraTab::Compose;
+            state.open_tab(TabKind::Compose);
             state.email_mode = EmailViewMode::Compose;
             render_active_skin(doc, state);
             return;
         }
     }
 
-    // 4. Check Eudora top tab bar
-    if let Some(tab_el) = doc.closest(target, "[data-tab]") {
-        if let Some(tab_name) = doc.get_attribute(tab_el, "data-tab") {
-            match tab_name.as_str() {
-                "in" => {
-                    state.eudora_tab = EudoraTab::In;
-                    if state.selected_mailbox == "Out" {
-                        state.selected_mailbox = "In".to_string();
-                    }
-                }
-                "out" => {
-                    state.eudora_tab = EudoraTab::Out;
-                }
-                "contacts" => {
-                    state.eudora_tab = EudoraTab::Contacts;
-                }
-                "filters" => {
-                    state.eudora_tab = EudoraTab::Filters;
-                }
-                "compose" => {
-                    state.eudora_tab = EudoraTab::Compose;
-                }
-                _ => {}
-            }
-            render_active_skin(doc, state);
-            return;
-        }
-    }
-
-    // 5. Check Contacts view item in Email sidebar
+    // 4. Check Contacts view item in Email sidebar
     if let Some(view_el) = doc.closest(target, "[data-view]") {
         if doc.get_attribute(view_el, "data-view").as_deref() == Some("contacts") {
             state.email_mode = EmailViewMode::Contacts;
@@ -2790,23 +3266,18 @@ fn handle_click(doc: &mut Document, target: u32, state: &mut AppState) {
         }
     }
 
-    // 6. Check mailbox selection (Wazoo item in Eudora OR sidebar item in Email)
+    // 5. Check mailbox selection (Wazoo item in Eudora OR sidebar item in Email)
     if let Some(mb_el) = doc.closest(target, "[data-mailbox]") {
         if let Some(mailbox) = doc.get_attribute(mb_el, "data-mailbox") {
             state.selected_label = None;
             state.email_mode = EmailViewMode::Mail;
-            if mailbox == "Out" && state.skin == Skin::Eudora {
-                state.eudora_tab = EudoraTab::Out;
-            } else {
-                state.selected_mailbox = mailbox;
-                state.eudora_tab = EudoraTab::In;
-            }
+            state.open_tab(TabKind::Mailbox(mailbox));
             render_active_skin(doc, state);
             return;
         }
     }
 
-    // 7. Check label selection in Email skin
+    // 6. Check label selection in Email skin
     if let Some(lbl_el) = doc.closest(target, "[data-label]") {
         if let Some(label) = doc.get_attribute(lbl_el, "data-label") {
             state.email_mode = EmailViewMode::Mail;
@@ -2820,7 +3291,7 @@ fn handle_click(doc: &mut Document, target: u32, state: &mut AppState) {
         }
     }
 
-    // 8. Check message row selection
+    // 7. Check message row selection
     if let Some(msg_el) = doc.closest(target, "[data-msg-id]") {
         if let Some(id_str) = doc.get_attribute(msg_el, "data-msg-id") {
             if let Ok(msg_id) = id_str.parse::<usize>() {
@@ -2838,7 +3309,7 @@ fn handle_click(doc: &mut Document, target: u32, state: &mut AppState) {
         }
     }
 
-    // 9. Check contact card selection
+    // 8. Check contact card selection
     if let Some(contact_el) = doc.closest(target, "[data-contact]") {
         if let Some(idx_str) = doc.get_attribute(contact_el, "data-contact") {
             if let Ok(idx) = idx_str.parse::<usize>() {
@@ -2851,7 +3322,7 @@ fn handle_click(doc: &mut Document, target: u32, state: &mut AppState) {
         }
     }
 
-    // 10. Check filter card / toggle switch
+    // 9. Check filter card / toggle switch
     if let Some(filter_el) = doc.closest(target, "[data-filter]") {
         if let Some(idx_str) = doc.get_attribute(filter_el, "data-filter") {
             if let Ok(idx) = idx_str.parse::<usize>() {
