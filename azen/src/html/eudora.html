@@ -85,45 +85,108 @@
   .wazoo-item {
     display: flex;
     align-items: center;
-    padding: 0 12px;
-    height: 26px;
+    padding: 0 10px;
+    height: 28px;
     cursor: pointer;
     gap: 6px;
     font-size: 10pt;
     color: #231e19;
-    border-radius: 5px;
+    border-radius: 4px;
     margin: 1px 4px;
+    user-select: none;
+    transition: background 0.12s, color 0.12s;
   }
-  .wazoo-item:hover { background: #eeecea; }
-  .wazoo-item.selected { background: #326ea5; color: white; }
+  .wazoo-item:hover { background: #e8e5df; }
+  .wazoo-item.selected { background: #326ea5; color: white; font-weight: 600; }
   .wazoo-item.sep { height: 1px; background: #d7d4cf; margin: 4px 10px; pointer-events: none; }
-  .wazoo-item .wazoo-icon { font-size: 13px; }
-  .wazoo-item .wazoo-name { flex: 1; }
+  .wazoo-item .wazoo-expand {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    font-size: 12px;
+    font-weight: 700;
+    color: #3b3630;
+    border-radius: 4px;
+    flex-shrink: 0;
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s;
+  }
+  .wazoo-item:hover .wazoo-expand {
+    color: #000000;
+  }
+  .wazoo-item .wazoo-expand:hover {
+    background: rgba(0, 0, 0, 0.12);
+    color: #000000;
+  }
+  .wazoo-item.selected .wazoo-expand {
+    color: #ffffff;
+  }
+  .wazoo-item.selected .wazoo-expand:hover {
+    background: rgba(255, 255, 255, 0.25);
+    color: #ffffff;
+  }
+  .wazoo-item .wazoo-icon {
+    font-size: 15px;
+    width: 20px;
+    height: 20px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  .wazoo-item .wazoo-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   .wazoo-item .wazoo-badge {
     background: #326ea5;
     color: white;
     font-size: 8pt;
+    font-weight: 700;
     padding: 1px 6px;
     border-radius: 8px;
     min-width: 20px;
     text-align: center;
   }
   .wazoo-item.selected .wazoo-badge { background: white; color: #326ea5; }
-  .wazoo-item .wazoo-expand { font-size: 8pt; color: #78726c; width: 12px; }
-  .wazoo-item.depth-1 { padding-left: 28px; }
-  .wazoo-item.depth-2 { padding-left: 44px; }
-  .wazoo-item.depth-3 { padding-left: 60px; }
+  .wazoo-item.depth-1 { padding-left: 24px; position: relative; }
+  .wazoo-item.depth-2 { padding-left: 38px; position: relative; }
+  .wazoo-item.depth-3 { padding-left: 52px; position: relative; }
+  .wazoo-item.depth-1::before {
+    content: "";
+    position: absolute;
+    left: 14px;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: rgba(0,0,0,0.08);
+  }
+  .wazoo-item.depth-2::before {
+    content: "";
+    position: absolute;
+    left: 28px;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: rgba(0,0,0,0.08);
+  }
   .wazoo-item .wazoo-menu-btn {
     opacity: 0;
-    font-size: 11px;
-    padding: 1px 5px;
+    font-size: 13px;
+    font-weight: 700;
+    padding: 1px 6px;
     border-radius: 4px;
     color: #78726c;
     margin-left: auto;
   }
-  .wazoo-item:hover .wazoo-menu-btn { opacity: 0.8; }
-  .wazoo-item:hover .wazoo-menu-btn:hover { opacity: 1; background: rgba(0,0,0,0.08); }
+  .wazoo-item:hover .wazoo-menu-btn { opacity: 0.85; }
+  .wazoo-item:hover .wazoo-menu-btn:hover { opacity: 1; background: rgba(0,0,0,0.10); color: #1a1612; }
   .wazoo-item.selected .wazoo-menu-btn { color: white; }
+  .wazoo-item.selected .wazoo-menu-btn:hover { background: rgba(255,255,255,0.25); color: white; }
   .wazoo-tabs {
     display: flex;
     border-top: 1px solid #d7d4cf;
@@ -177,10 +240,15 @@
 
   /* ===== Welcome Dashboard ===== */
   #page-welcome {
+    display: none;
     overflow-y: auto;
     background: #f5f3f0;
     flex: 1;
     min-height: 0;
+  }
+  #page-welcome.active {
+    display: flex;
+    flex-direction: column;
   }
   .welcome-hero {
     background: linear-gradient(135deg, #1e3a5f 0%, #2d5f8a 100%);
@@ -472,43 +540,130 @@
   /* ===== Outbox page ===== */
   #page-out .msg-header .lbl-to { color: #6a6560; }
 
+  /* ===== Splitters ===== */
+  .split-bar-v {
+    width: 6px;
+    background: #e4e1dc;
+    border-left: 1px solid #d0cdc6;
+    border-right: 1px solid #ffffff;
+    cursor: col-resize;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    user-select: none;
+    z-index: 10;
+  }
+  .split-bar-v:hover {
+    background: #326ea5;
+  }
+  .split-grip-v {
+    width: 2px;
+    height: 24px;
+    background: #a8a49c;
+    border-radius: 1px;
+    box-shadow: 0 0 0 1px rgba(255,255,255,0.4);
+  }
+  .split-bar-v:hover .split-grip-v {
+    background: white;
+  }
+
+  .split-bar-h {
+    height: 6px;
+    background: #e4e1dc;
+    border-top: 1px solid #d0cdc6;
+    border-bottom: 1px solid #ffffff;
+    cursor: row-resize;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    user-select: none;
+    z-index: 10;
+  }
+  .split-bar-h:hover {
+    background: #326ea5;
+  }
+  .split-grip-h {
+    height: 2px;
+    width: 28px;
+    background: #a8a49c;
+    border-radius: 1px;
+    box-shadow: 0 0 0 1px rgba(255,255,255,0.4);
+  }
+  .split-bar-h:hover .split-grip-h {
+    background: white;
+  }
+
   /* ===== Contacts page ===== */
   #page-contacts {
-    flex-direction: row !important;
+    display: none;
+    flex-direction: row;
+    height: 100%;
+    overflow: hidden;
+  }
+  #page-contacts.active {
+    display: flex;
   }
   .contact-list-wrap {
     width: 280px;
     flex-shrink: 0;
-    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
     background: white;
-    border-right: 1px solid #d2cfc8;
+    overflow: hidden;
   }
+  .contact-topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 10px;
+    background: #f8f7f4;
+    border-bottom: 1px solid #d7d4cf;
+    gap: 8px;
+  }
+  .contact-topbar-title {
+    font-size: 10pt;
+    font-weight: bold;
+    color: #231e19;
+  }
+  .contact-btn {
+    background: #326ea5;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-size: 8.5pt;
+    cursor: pointer;
+    font-family: inherit;
+    font-weight: 500;
+  }
+  .contact-btn:hover { background: #265a88; }
   .contact-search {
-    padding: 8px;
+    padding: 6px 10px;
+    border-bottom: 1px solid #eeecea;
   }
   .contact-search input {
     width: 100%;
-    padding: 6px 10px;
+    padding: 5px 8px;
     border: 1px solid #d7d4cf;
-    border-radius: 6px;
+    border-radius: 4px;
     font-size: 9pt;
     background: white;
     color: #231e19;
     font-family: inherit;
+    box-sizing: border-box;
   }
-  .contact-section-hdr {
-    font-weight: bold;
-    font-size: 9pt;
-    color: #326ea5;
-    padding: 4px 14px 2px;
-    border-bottom: 1px solid #eeecea;
+  .contact-cards-container {
+    flex: 1;
+    overflow-y: auto;
   }
   .contact-card {
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 8px 12px;
-    height: 68px;
+    padding: 6px 10px;
+    height: 52px;
     cursor: pointer;
     border-bottom: 1px solid #f0eeea;
   }
@@ -518,231 +673,443 @@
   .contact-card.selected .contact-title,
   .contact-card.selected .contact-email { color: white; }
   .avatar {
-    width: 44px;
-    height: 44px;
+    width: 38px;
+    height: 38px;
     border-radius: 50%;
     display: flex;
     align-items: center;
     justify-content: center;
     color: white;
-    font-size: 15px;
+    font-size: 13px;
     font-weight: bold;
     flex-shrink: 0;
-    position: relative;
-  }
-  .avatar .online-dot {
-    position: absolute;
-    bottom: 1px;
-    right: 1px;
-    width: 10px;
-    height: 10px;
-    background: #2ea043;
-    border: 2px solid white;
-    border-radius: 50%;
   }
   .contact-info { flex: 1; min-width: 0; overflow: hidden; }
-  .contact-name { font-weight: bold; font-size: 10pt; color: #231e19; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .contact-title { font-size: 8.5pt; color: #231e19; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .contact-name { font-weight: bold; font-size: 9.5pt; color: #231e19; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .contact-title { font-size: 8pt; color: #6a6560; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .contact-email { font-size: 8pt; color: #78726c; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-  /* Contact detail */
+  /* Contact Inspector / Detail Pane */
   .contact-detail-wrap {
     flex: 1;
     overflow-y: auto;
-    background: #f5f3f0;
-    padding: 20px;
+    background: #f8f7f4;
+    padding: 16px 20px;
+    min-width: 0;
   }
-  .contact-detail-card {
-    max-width: 440px;
+  .contact-inspector {
     background: white;
-    border-radius: 10px;
+    border: 1px solid #d7d4cf;
+    border-radius: 8px;
     overflow: hidden;
-    box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+    max-width: 760px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
   }
-  .contact-banner {
-    height: 80px;
-  }
-  .contact-banner-inner {
-    height: 100%;
-    border-radius: 8px 8px 0 0;
-  }
-  .contact-avatar-area {
+  .ci-header {
     display: flex;
-    flex-direction: column;
     align-items: center;
-    margin-top: -36px;
-    padding-bottom: 8px;
+    justify-content: space-between;
+    padding: 12px 18px;
+    background: #f5f3f0;
+    border-bottom: 1px solid #d7d4cf;
+    gap: 12px;
+    flex-wrap: wrap;
   }
-  .contact-avatar-large {
-    width: 72px;
-    height: 72px;
+  .ci-title-area {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .ci-avatar-large {
+    width: 48px;
+    height: 48px;
     border-radius: 50%;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 26px;
-    font-weight: bold;
     color: white;
-    border: 4px solid white;
-    position: relative;
-  }
-  .contact-avatar-large .online-dot {
-    position: absolute;
-    bottom: 2px;
-    right: 2px;
-    width: 12px;
-    height: 12px;
-    background: #2ea043;
-    border: 2px solid white;
-    border-radius: 50%;
-  }
-  .contact-detail-name {
-    font-size: 14pt;
+    font-size: 17px;
     font-weight: bold;
-    margin-top: 6px;
+    flex-shrink: 0;
+  }
+  .ci-title-text {
+    font-size: 13pt;
+    font-weight: bold;
     color: #231e19;
   }
-  .contact-detail-title { font-size: 9pt; color: #6a6560; margin-top: 2px; }
-  .contact-detail-online { font-size: 8pt; font-weight: bold; color: #2ea043; margin-top: 2px; }
-  .contact-detail-body { padding: 0 20px 16px; }
-  .contact-detail-divider { border: none; border-top: 1px solid #d7d4cf; margin: 10px 0; }
-  .contact-info-row { display: flex; gap: 10px; margin-bottom: 12px; align-items: flex-start; }
-  .contact-info-icon { color: #326ea5; font-size: 15px; margin-top: 2px; }
-  .contact-info-label { font-size: 7.5pt; font-weight: bold; color: #6a6560; text-transform: uppercase; }
-  .contact-info-value { font-size: 10pt; color: #231e19; }
-  .contact-info-value.email { color: #326ea5; }
-  .contact-detail-actions {
-    display: flex;
-    gap: 8px;
-    margin: 14px 0 6px;
-  }
-  .contact-action-btn {
-    flex: 1;
-    padding: 8px 0;
-    border-radius: 6px;
-    text-align: center;
+  .ci-subtitle {
     font-size: 9pt;
-    cursor: pointer;
-    border: 1px solid #d7d4cf;
-    background: white;
-    color: #231e19;
+    color: #6a6560;
   }
-  .contact-action-btn.primary { background: #326ea5; color: white; border-color: #326ea5; }
-  .contact-action-btn:hover:not(.primary) { background: #eeecea; }
-  .recent-emails-section { margin-top: 12px; }
-  .recent-label { font-size: 7.5pt; font-weight: bold; color: #6a6560; text-transform: uppercase; margin-bottom: 6px; }
-  .recent-email-row {
-    background: white;
-    border: 1px solid #d7d4cf;
-    border-radius: 4px;
-    padding: 6px 10px;
-    margin-bottom: 6px;
-  }
-  .recent-email-subj { font-size: 9pt; color: #231e19; }
-  .recent-email-date { font-size: 8pt; color: #6a6560; }
-
-  /* ===== Filters page ===== */
-  #page-filters {
-    background: white;
-  }
-  .filters-header {
+  .ci-actions {
     display: flex;
     align-items: center;
-    padding: 10px 16px;
-    border-bottom: 1px solid #d7d4cf;
-    gap: 10px;
+    gap: 8px;
   }
-  .filters-title { font-size: 11pt; font-weight: bold; color: #231e19; flex: 1; }
-  .filters-meta { font-size: 8pt; color: #78726c; }
-  .add-rule-btn {
-    background: #326ea5;
-    color: white;
-    border: none;
+  .ci-btn {
+    padding: 5px 12px;
     border-radius: 4px;
-    padding: 4px 10px;
+    border: 1px solid #d7d4cf;
+    background: white;
     font-size: 9pt;
     cursor: pointer;
     font-family: inherit;
+    font-weight: 500;
+    color: #231e19;
   }
-  .filter-cards { padding: 8px 12px; overflow-y: auto; }
+  .ci-btn:hover { background: #eeecea; }
+  .ci-btn.primary { background: #326ea5; color: white; border-color: #326ea5; }
+  .ci-btn.primary:hover { background: #265a88; }
+  .ci-btn.danger { color: #d23720; }
+  .ci-btn.danger:hover { background: #fee2e2; }
+  .ci-status-badge {
+    font-size: 8pt;
+    color: #2ea043;
+    font-weight: 600;
+    padding: 2px 8px;
+    background: rgba(46,160,67,0.12);
+    border-radius: 10px;
+  }
+
+  /* Subtabs bar */
+  .ci-subtabs {
+    display: flex;
+    background: #f0eeea;
+    border-bottom: 1px solid #d7d4cf;
+    padding: 0 10px;
+  }
+  .ci-subtab {
+    padding: 8px 14px;
+    font-size: 9pt;
+    cursor: pointer;
+    color: #6a6560;
+    border-bottom: 2px solid transparent;
+    font-weight: 500;
+  }
+  .ci-subtab:hover { color: #231e19; }
+  .ci-subtab.selected {
+    color: #326ea5;
+    font-weight: bold;
+    border-bottom-color: #326ea5;
+    background: white;
+  }
+
+  /* Form content */
+  .ci-body {
+    padding: 16px 20px;
+  }
+  .ci-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px 18px;
+  }
+  .ci-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .ci-field.full {
+    grid-column: 1 / -1;
+  }
+  .ci-label {
+    font-size: 8pt;
+    font-weight: 600;
+    color: #6a6560;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .ci-input {
+    padding: 6px 10px;
+    border: 1px solid #d7d4cf;
+    border-radius: 4px;
+    font-size: 9.5pt;
+    color: #231e19;
+    background: white;
+    font-family: inherit;
+    box-sizing: border-box;
+    width: 100%;
+  }
+  .ci-input:focus {
+    border-color: #326ea5;
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(50,110,165,0.2);
+  }
+  .ci-textarea {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid #d7d4cf;
+    border-radius: 4px;
+    font-size: 9.5pt;
+    color: #231e19;
+    background: white;
+    font-family: inherit;
+    box-sizing: border-box;
+    resize: vertical;
+    min-height: 90px;
+  }
+  .ci-textarea:focus {
+    border-color: #326ea5;
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(50,110,165,0.2);
+  }
+
+  /* ===== Filters page ===== */
+  #page-filters {
+    display: none;
+    flex-direction: row;
+    height: 100%;
+    overflow: hidden;
+    background: white;
+  }
+  #page-filters.active {
+    display: flex;
+  }
+  .filter-list-pane {
+    width: 320px;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    background: white;
+    overflow: hidden;
+  }
+  .filter-topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    background: #f8f7f4;
+    border-bottom: 1px solid #d7d4cf;
+    gap: 8px;
+  }
+  .filter-topbar-title {
+    font-size: 10pt;
+    font-weight: bold;
+    color: #231e19;
+  }
+  .filter-topbar-meta {
+    font-size: 8pt;
+    color: #78726c;
+  }
+  .filter-toolbar {
+    display: flex;
+    align-items: center;
+    padding: 6px 10px;
+    background: #f0eeea;
+    border-bottom: 1px solid #d7d4cf;
+    gap: 6px;
+  }
+  .filt-tool-btn {
+    padding: 3px 8px;
+    border: 1px solid #d7d4cf;
+    background: white;
+    border-radius: 4px;
+    font-size: 8.5pt;
+    cursor: pointer;
+    font-family: inherit;
+    font-weight: 500;
+    color: #231e19;
+  }
+  .filt-tool-btn:hover { background: #e6e3dd; }
+  .filt-tool-btn.primary { background: #326ea5; color: white; border-color: #326ea5; }
+  .filt-tool-btn.primary:hover { background: #265a88; }
+  .filt-badge-in {
+    background: #3182ce;
+    color: #ffffff;
+    border-radius: 3px;
+    padding: 1px 5px;
+    font-size: 7pt;
+    font-weight: bold;
+  }
+  .filt-badge-out {
+    background: #dd6b20;
+    color: #ffffff;
+    border-radius: 3px;
+    padding: 1px 5px;
+    font-size: 7pt;
+    font-weight: bold;
+  }
+  .filt-badge-man {
+    background: #805ad5;
+    color: #ffffff;
+    border-radius: 3px;
+    padding: 1px 5px;
+    font-size: 7pt;
+    font-weight: bold;
+  }
+  .filter-cards {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
+  }
   .filter-card {
     background: white;
     border: 1px solid #d7d4cf;
     border-radius: 6px;
-    padding: 10px 14px;
+    padding: 8px 10px;
+    margin-bottom: 6px;
+    cursor: pointer;
+    position: relative;
+    border-left: 4px solid #326ea5;
+  }
+  .filter-card:hover { background: #f8f7f4; }
+  .filter-card.selected {
+    border-color: #326ea5;
+    background: #edf5fc;
+    box-shadow: 0 0 0 1px #326ea5;
+  }
+  .filter-card.disabled {
+    border-left-color: #a8a49c;
+    opacity: 0.65;
+  }
+  .fc-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 4px;
+  }
+  .fc-name {
+    font-size: 9.5pt;
+    font-weight: bold;
+    color: #231e19;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .fc-badges {
+    display: flex;
+    gap: 4px;
+  }
+  .fc-summary {
+    font-size: 8.5pt;
+    color: #55504a;
+    line-height: 1.4;
+  }
+  .fc-action {
+    font-size: 8.5pt;
+    font-weight: 600;
+    color: #326ea5;
+    margin-top: 3px;
+  }
+
+  /* Filter Editor Pane */
+  .filter-editor-pane {
+    flex: 1;
+    overflow-y: auto;
+    background: #f8f7f4;
+    padding: 16px 20px;
+    min-width: 0;
+  }
+  .filter-inspector {
+    background: white;
+    border: 1px solid #d7d4cf;
+    border-radius: 8px;
+    overflow: hidden;
+    max-width: 760px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+  }
+  .fi-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 18px;
+    background: #f5f3f0;
+    border-bottom: 1px solid #d7d4cf;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .fi-title {
+    font-size: 12pt;
+    font-weight: bold;
+    color: #231e19;
+  }
+  .fi-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .fi-body {
+    padding: 16px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .fi-section {
+    background: #fafaf8;
+    border: 1px solid #e4e1dc;
+    border-radius: 6px;
+    padding: 12px 14px;
+  }
+  .fi-section-title {
+    font-size: 8.5pt;
+    font-weight: 700;
+    color: #326ea5;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
     margin-bottom: 8px;
     display: flex;
-    gap: 12px;
-    align-items: flex-start;
-    position: relative;
-  }
-  .filter-card.selected { border-color: #326ea5; border-width: 2px; }
-  .filter-status-bar {
-    width: 4px;
-    border-radius: 2px;
-    align-self: stretch;
-    flex-shrink: 0;
-  }
-  .filter-status-bar.active { background: #2ea043; }
-  .filter-status-bar.inactive { background: #78726c; }
-  .filter-toggle {
-    display: inline-flex;
     align-items: center;
-    margin-top: 4px;
+    justify-content: space-between;
   }
-  .toggle-track {
-    width: 38px;
-    height: 20px;
-    border-radius: 10px;
-    position: relative;
-    cursor: pointer;
-    flex-shrink: 0;
+  .fi-scope-group {
+    display: flex;
+    gap: 10px;
+    align-items: center;
   }
-  .toggle-track.on { background: #2ea043; }
-  .toggle-track.off { background: #78726c; }
-  .toggle-knob {
-    position: absolute;
-    width: 16px;
-    height: 16px;
-    border-radius: 50%;
+  .scope-btn {
+    padding: 4px 10px;
+    border-radius: 12px;
+    border: 1px solid #d7d4cf;
     background: white;
-    top: 2px;
-    transition: left 0.15s;
+    font-size: 8.5pt;
+    cursor: pointer;
+    font-weight: 500;
+    color: #55504a;
   }
-  .toggle-track.on .toggle-knob { left: 20px; }
-  .toggle-track.off .toggle-knob { left: 2px; }
-  .filter-body { flex: 1; min-width: 0; }
-  .filter-num { font-size: 8pt; color: #78726c; }
-  .filter-name { font-weight: bold; color: #231e19; font-size: 10pt; }
-  .filter-name.inactive { color: #78726c; }
-  .filter-row { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
-  .filter-pill {
-    font-size: 7pt;
-    font-weight: bold;
-    color: white;
-    padding: 1px 5px;
-    border-radius: 3px;
-    text-transform: uppercase;
+  .scope-btn.active.incoming { background: #3182ce; color: white; border-color: #3182ce; font-weight: bold; }
+  .scope-btn.active.outgoing { background: #dd6b20; color: white; border-color: #dd6b20; font-weight: bold; }
+  .scope-btn.active.manual { background: #805ad5; color: white; border-color: #805ad5; font-weight: bold; }
+
+  .cond-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 6px;
   }
-  .filter-pill.if { background: #326ea5; }
-  .filter-pill.then { background: #2ea043; }
-  .filter-pill.then.junk { background: #d97706; }
-  .filter-arrow { color: #326ea5; font-size: 12px; }
-  .filter-text { font-size: 9pt; color: #231e19; }
-  .filter-text.inactive { color: #78726c; }
-  .filter-action-text { font-size: 9pt; color: #326ea5; }
-  .filter-action-text.inactive { color: #78726c; }
-  .filter-status-pill {
-    position: absolute;
-    bottom: 8px;
-    right: 10px;
-    font-size: 8pt;
-    color: white;
-    padding: 2px 8px;
-    border-radius: 8px;
+  .fi-select {
+    padding: 5px 8px;
+    border: 1px solid #d7d4cf;
+    border-radius: 4px;
+    font-size: 9pt;
+    background: white;
+    color: #231e19;
+    font-family: inherit;
   }
-  .filter-status-pill.active { background: #2ea043; }
-  .filter-status-pill.inactive { background: #78726c; }
+  .fi-select:focus,
+  .fi-input:focus {
+    border-color: #326ea5;
+    outline: none;
+  }
+  .fi-input {
+    flex: 1;
+    padding: 5px 8px;
+    border: 1px solid #d7d4cf;
+    border-radius: 4px;
+    font-size: 9pt;
+    background: white;
+    color: #231e19;
+    font-family: inherit;
+    box-sizing: border-box;
+  }
+  .conj-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 8px 0;
+    padding-left: 4px;
+    font-size: 8.5pt;
+    font-weight: 600;
+    color: #78726c;
+  }
 
   /* ===== Compose page ===== */
   #page-compose { display: none; }
@@ -787,10 +1154,20 @@
   }
   .compose-toolbar {
     display: flex;
-    flex-wrap: wrap;
-    background: #f5f3f0;
+    align-items: center;
+    background: #f6f5f3;
     border-bottom: 1px solid #d2cfc8;
-    padding: 2px 4px;
+    padding: 4px 6px;
+    gap: 4px;
+    flex-shrink: 0;
+  }
+  .comp-fmt-bar {
+    display: flex;
+    align-items: center;
+    background: #edeae4;
+    border-top: 1px solid #d2cfc8;
+    border-bottom: 1px solid #d2cfc8;
+    padding: 3px 6px;
     gap: 2px;
     flex-shrink: 0;
   }
@@ -798,20 +1175,51 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    height: 30px;
-    min-width: 28px;
-    padding: 0 6px;
-    border: none;
+    min-height: 24px;
+    min-width: 24px;
+    padding: 2px 4px;
+    border: 1px solid transparent;
     background: transparent;
-    color: #231e19;
-    font-size: 10pt;
+    color: #2e2a25;
     cursor: pointer;
-    border-radius: 6px;
+    border-radius: 4px;
     font-family: inherit;
+    box-sizing: border-box;
   }
-  .ctbtn:hover { background: #e6e3de; }
-  .ctbtn.accent { background: #326ea5; color: white; }
-  .ctbtn.sep { margin-right: 4px; border-right: 1px solid rgba(35,30,25,0.12); }
+  .comp-fmt-bar .ctbtn {
+    min-height: 22px;
+    min-width: 22px;
+    padding: 1px 3px;
+  }
+  .ctbtn:hover { background: rgba(0,0,0,0.08); border-color: rgba(0,0,0,0.12); }
+  .ctbtn:active, .ctbtn.active { background: #326ea5; color: white; border-color: #285f94; }
+  .ctbtn.accent { background: #326ea5; color: white; border-color: #285f94; font-weight: 600; }
+  .ctbtn.accent:hover { background: #285f94; }
+  .ctbtn.toggle-btn { min-width: 28px; height: 22px; font-size: 8.5pt; font-weight: 600; padding: 0 4px; border: 1px solid #c8c4bc; background: white; border-radius: 3px; }
+  .ctbtn.toggle-btn:hover { background: #eeecea; }
+  .ctbtn.toggle-btn.active { background: #326ea5; color: white; border-color: #285f94; }
+  .comp-sep-v {
+    width: 1px;
+    height: 18px;
+    background: #d2cfc8;
+    margin: 0 4px;
+    flex-shrink: 0;
+  }
+  .comp-select {
+    height: 24px;
+    padding: 1px 6px;
+    font-size: 8.5pt;
+    font-family: inherit;
+    background: #ffffff;
+    border: 1px solid #c8c4bc;
+    border-radius: 4px;
+    color: #231e19;
+    cursor: pointer;
+    outline: none;
+  }
+  .comp-select:focus {
+    border-color: #326ea5;
+  }
   .compose-editor {
     flex: 1;
     overflow-y: auto;
@@ -956,6 +1364,11 @@
   .dark .wazoo-item {
     color: #c8c3bc;
   }
+  .dark .wazoo-item .wazoo-expand { color: #a8a29a; }
+  .dark .wazoo-item:hover .wazoo-expand { color: #ffffff; }
+  .dark .wazoo-item .wazoo-expand:hover { background: rgba(255, 255, 255, 0.15); color: #ffffff; }
+  .dark .wazoo-item.selected .wazoo-expand { color: #ffffff; }
+  .dark .wazoo-item.depth-1::before, .dark .wazoo-item.depth-2::before { background: rgba(255,255,255,0.08); }
   .dark .wazoo-item:hover,
   .dark table.msg-list tbody tr:hover:not(.selected),
   .dark .contact-card:hover,
@@ -1097,6 +1510,17 @@
     border-color: #2c2c30;
     color: #c8c3bc;
   }
+  .dark .comp-select {
+    background: #222226;
+    border-color: #323238;
+    color: #e2ded9;
+  }
+  .dark .comp-label {
+    color: #8e8982;
+  }
+  .dark .comp-sep-v {
+    background: #323238;
+  }
   .dark #sb-left {
     color: #c8c3bc;
     border-color: #32323a;
@@ -1139,6 +1563,841 @@
   .dark .ctx-sep {
     background: #33333a;
   }
+  .dark .split-bar-v {
+    background: #252528;
+    border-left: 1px solid #1a1a1d;
+    border-right: 1px solid #333338;
+  }
+  .dark .split-bar-v:hover {
+    background: #326ea5;
+  }
+  .dark .split-grip-v {
+    background: #55555c;
+  }
+  .dark .split-bar-h {
+    background: #252528;
+    border-top: 1px solid #1a1a1d;
+    border-bottom: 1px solid #333338;
+  }
+  .dark .split-bar-h:hover {
+    background: #326ea5;
+  }
+  .dark .split-grip-h {
+    background: #55555c;
+  }
+  .dark .contact-topbar,
+  .dark .filter-topbar,
+  .dark .ci-header,
+  .dark .fi-header {
+    background: #1c1c1f;
+    border-color: #2c2c30;
+  }
+  .dark .contact-topbar-title,
+  .dark .filter-topbar-title,
+  .dark .ci-title-text,
+  .dark .fi-title {
+    color: #f0ebe4;
+  }
+  .dark .ci-subtitle,
+  .dark .contact-topbar-count,
+  .dark .filter-topbar-meta,
+  .dark .fc-summary,
+  .dark .conj-row {
+    color: #8e8982;
+  }
+  .dark .contact-inspector,
+  .dark .filter-inspector {
+    background: #18181b;
+    border-color: #2c2c30;
+  }
+  .dark .ci-subtabs,
+  .dark .filter-toolbar {
+    background: #141416;
+    border-color: #2c2c30;
+  }
+  .dark .ci-subtab {
+    color: #8e8982;
+  }
+  .dark .ci-subtab:hover {
+    color: #e2ded9;
+  }
+  .dark .ci-subtab.selected {
+    background: #18181b;
+    color: #6da8df;
+    border-bottom-color: #326ea5;
+  }
+  .dark .ci-label,
+  .dark .fi-section-title {
+    color: #6da8df;
+  }
+  .dark .ci-input,
+  .dark .ci-textarea,
+  .dark .fi-input,
+  .dark .fi-select {
+    background: #1c1c1f;
+    border-color: #2c2c30;
+    color: #e2ded9;
+  }
+  .dark .ci-btn,
+  .dark .filt-tool-btn {
+    background: #222226;
+    border-color: #323238;
+    color: #e2ded9;
+  }
+  .dark .ci-btn:hover,
+  .dark .filt-tool-btn:hover {
+    background: #2c2c32;
+  }
+  .dark .fi-section {
+    background: #151518;
+    border-color: #26262b;
+  }
+  .dark .scope-btn {
+    background: #222226;
+    border-color: #323238;
+    color: #8e8982;
+  }
+  .dark .filter-card {
+    background: #1c1c1f;
+    border-color: #2c2c30;
+  }
+  .dark .filter-card:hover {
+    background: #242429;
+  }
+  .dark .filter-card.selected {
+    background: #1c2738;
+    border-color: #326ea5;
+  }
+  .dark .fc-name {
+    color: #f0ebe4;
+  }
+  .dark .fc-action {
+    color: #6da8df;
+  }
+
+  /* ===== Wazoo sidebar tabs (5 tabs) ===== */
+  .wazoo-tabs {
+    display: flex;
+    border-top: 1px solid #d7d4cf;
+    background: #e6e3de;
+    flex-shrink: 0;
+  }
+  .wazoo-tab {
+    flex: 1;
+    text-align: center;
+    padding: 6px 1px;
+    font-size: 8pt;
+    font-weight: 600;
+    cursor: pointer;
+    color: #5f5a53;
+    user-select: none;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    transition: background 0.12s, color 0.12s;
+  }
+  .wazoo-tab.selected {
+    background: #326ea5;
+    color: white;
+    font-weight: 700;
+  }
+  .wazoo-tab:not(.selected):hover { background: #dddad5; color: #231e19; }
+
+  /* ===== Mini Calendar in Wazoo ===== */
+  .mini-cal {
+    padding: 6px 8px;
+    border-bottom: 1px solid #e0ddd7;
+    background: #faf8f5;
+  }
+  .mini-cal-nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 6px;
+  }
+  .mini-cal-title {
+    font-size: 9pt;
+    font-weight: 700;
+    color: #231e19;
+  }
+  .mini-cal-btn-group {
+    display: flex;
+    gap: 3px;
+  }
+  .mini-cal-btn {
+    padding: 1px 6px;
+    font-size: 8.5pt;
+    border: 1px solid #d0ccc5;
+    background: #ffffff;
+    border-radius: 4px;
+    cursor: pointer;
+    color: #403b35;
+    transition: background 0.1s;
+  }
+  .mini-cal-btn:hover { background: #ece8e1; }
+  .mini-cal-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    text-align: center;
+    gap: 1px;
+    font-size: 8pt;
+  }
+  .mini-cal-dow {
+    font-weight: 700;
+    color: #8a847c;
+    padding: 2px 0;
+  }
+  .mini-cal-day {
+    padding: 4px 0;
+    border-radius: 4px;
+    cursor: pointer;
+    color: #231e19;
+    position: relative;
+    user-select: none;
+    transition: background 0.1s;
+  }
+  .mini-cal-day:hover { background: #e8e5df; }
+  .mini-cal-day.other-month { color: #aaa59e; opacity: 0.55; }
+  .mini-cal-day.today { font-weight: 700; border: 1px solid #326ea5; }
+  .mini-cal-day.selected { background: #326ea5 !important; color: white !important; font-weight: 700; }
+  .mini-cal-day.has-event::after {
+    content: "";
+    position: absolute;
+    bottom: 1px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: #326ea5;
+  }
+  .mini-cal-day.selected.has-event::after { background: white; }
+
+  /* ===== Sidebar Agenda / Event List ===== */
+  .sidebar-agenda {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+  }
+  .agenda-topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 5px 8px;
+    background: #f0ede8;
+    border-bottom: 1px solid #e0ddd7;
+    font-size: 8pt;
+    font-weight: 700;
+    color: #403b35;
+  }
+  .agenda-topbar-link {
+    cursor: pointer;
+    color: #326ea5;
+    font-weight: 600;
+    text-decoration: none;
+    font-size: 8pt;
+  }
+  .agenda-topbar-link:hover { text-decoration: underline; }
+  .agenda-hdr {
+    padding: 5px 8px;
+    font-size: 7.5pt;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #7a746c;
+    background: rgba(0,0,0,0.02);
+  }
+  .agenda-item {
+    display: flex;
+    flex-direction: column;
+    padding: 5px 8px;
+    border-bottom: 1px solid #ece9e3;
+    border-left: 4px solid #326ea5;
+    cursor: pointer;
+    background: white;
+    margin: 2px 4px;
+    border-radius: 4px;
+    transition: background 0.1s;
+  }
+  .agenda-item:hover { background: #f2efe9; }
+  .agenda-time {
+    font-size: 7.5pt;
+    font-weight: 700;
+    color: #326ea5;
+    margin-bottom: 1px;
+  }
+  .agenda-summary {
+    font-size: 8.5pt;
+    font-weight: 600;
+    color: #231e19;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .agenda-loc {
+    font-size: 7.5pt;
+    color: #7a746c;
+    margin-top: 1px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .agenda-empty {
+    padding: 20px 10px;
+    text-align: center;
+    color: #8c867e;
+    font-size: 8.5pt;
+  }
+
+  /* ===== Sidebar Status & Tasks ===== */
+  .sidebar-status {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    padding: 6px;
+    gap: 6px;
+  }
+  .status-sec-hdr {
+    font-size: 7.5pt;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #7a746c;
+    padding: 2px 2px;
+  }
+  .status-task-card {
+    background: white;
+    border: 1px solid #dcd8d1;
+    border-radius: 5px;
+    padding: 6px 8px;
+    margin-bottom: 2px;
+  }
+  .status-task-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 8.5pt;
+    font-weight: 600;
+    color: #231e19;
+  }
+  .status-task-icon { font-size: 13px; }
+  .status-task-sub {
+    font-size: 7.5pt;
+    color: #6d675e;
+    margin-top: 2px;
+  }
+  .status-pbar-wrap {
+    height: 4px;
+    background: #e6e3de;
+    border-radius: 2px;
+    overflow: hidden;
+    margin-top: 4px;
+  }
+  .status-pbar-fill {
+    height: 100%;
+    background: #2ea043;
+    border-radius: 2px;
+  }
+  .status-actions-bar {
+    display: flex;
+    gap: 4px;
+    margin-top: 2px;
+  }
+  .status-act-btn {
+    flex: 1;
+    padding: 4px 2px;
+    font-size: 7.5pt;
+    font-weight: 600;
+    border: 1px solid #d0ccc5;
+    background: #faf8f5;
+    border-radius: 4px;
+    cursor: pointer;
+    color: #3b3630;
+    text-align: center;
+  }
+  .status-act-btn:hover { background: #ece8e1; }
+  .status-log-wrap {
+    flex: 1;
+    background: white;
+    border: 1px solid #dcd8d1;
+    border-radius: 5px;
+    padding: 4px 6px;
+    overflow-y: auto;
+    font-family: Menlo, Monaco, monospace;
+    font-size: 7pt;
+    max-height: 180px;
+    color: #3b3630;
+  }
+  .status-log-entry {
+    margin-bottom: 3px;
+    line-height: 1.35;
+    word-break: break-all;
+  }
+  .status-log-time { color: #8c867e; margin-right: 4px; }
+
+  /* ===== Sidebar Signatures & Stationery ===== */
+  .sidebar-sig-card, .sidebar-stat-card {
+    background: white;
+    border: 1px solid #dcd8d1;
+    border-radius: 5px;
+    padding: 8px 10px;
+    margin: 4px 6px;
+    cursor: pointer;
+    transition: background 0.1s;
+  }
+  .sidebar-sig-card:hover, .sidebar-stat-card:hover { background: #f2efe9; }
+  .sidebar-sig-title, .sidebar-stat-title {
+    font-size: 9pt;
+    font-weight: 700;
+    color: #231e19;
+    margin-bottom: 3px;
+  }
+  .sidebar-sig-body, .sidebar-stat-body {
+    font-size: 8pt;
+    color: #6e6960;
+    white-space: pre-wrap;
+  }
+
+  /* ===== Page: Calendar Full View ===== */
+  #page-calendar {
+    display: none;
+    flex-direction: column;
+    height: 100%;
+    overflow: hidden;
+    background: #ffffff;
+  }
+  #page-calendar.active {
+    display: flex;
+  }
+  .cal-main-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 14px;
+    border-bottom: 1px solid #d7d4cf;
+    background: #f8f7f4;
+    flex-shrink: 0;
+    gap: 12px;
+  }
+  .cal-nav-group {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .cal-btn {
+    padding: 4px 10px;
+    font-size: 9pt;
+    font-weight: 600;
+    border: 1px solid #d0ccc5;
+    background: white;
+    border-radius: 5px;
+    cursor: pointer;
+    color: #231e19;
+    transition: background 0.12s, border-color 0.12s;
+  }
+  .cal-btn:hover { background: #eae7e1; border-color: #b5b0a7; }
+  .cal-btn.primary {
+    background: #326ea5;
+    color: white;
+    border-color: #275683;
+  }
+  .cal-btn.primary:hover { background: #285885; }
+  .cal-btn.danger {
+    background: #d2372d;
+    color: white;
+    border-color: #a8231a;
+  }
+  .cal-btn.danger:hover { background: #ba281f; }
+  .cal-title-heading {
+    font-size: 13pt;
+    font-weight: 700;
+    color: #231e19;
+    margin-left: 8px;
+    min-width: 170px;
+  }
+  .cal-view-modes {
+    display: flex;
+    border: 1px solid #d0ccc5;
+    border-radius: 5px;
+    overflow: hidden;
+    background: white;
+  }
+  .cal-mode-btn {
+    padding: 4px 12px;
+    font-size: 8.5pt;
+    font-weight: 600;
+    border: none;
+    border-right: 1px solid #d0ccc5;
+    background: transparent;
+    cursor: pointer;
+    color: #55504a;
+    transition: background 0.1s, color 0.1s;
+  }
+  .cal-mode-btn:last-child { border-right: none; }
+  .cal-mode-btn:hover { background: #f2eee8; }
+  .cal-mode-btn.selected {
+    background: #326ea5;
+    color: white;
+  }
+  .cal-view-content {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Month grid */
+  .cal-month-grid {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 500px;
+  }
+  .cal-weekday-row {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    background: #f0ede8;
+    border-bottom: 1px solid #d7d4cf;
+    text-align: center;
+    font-size: 9pt;
+    font-weight: 700;
+    color: #55504a;
+    padding: 6px 0;
+    flex-shrink: 0;
+  }
+  .cal-month-body {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    flex: 1;
+    grid-auto-rows: 1fr;
+  }
+  .cal-day-cell {
+    border-right: 1px solid #e2ded8;
+    border-bottom: 1px solid #e2ded8;
+    padding: 4px 6px;
+    display: flex;
+    flex-direction: column;
+    min-height: 80px;
+    background: white;
+    cursor: pointer;
+    transition: background 0.1s;
+  }
+  .cal-day-cell:nth-child(7n) { border-right: none; }
+  .cal-day-cell:hover { background: #faf8f5; }
+  .cal-day-cell.other-month { background: #fcfbf9; }
+  .cal-day-cell.other-month .cal-day-num { color: #b0aba3; }
+  .cal-day-cell.today { background: rgba(50, 110, 165, 0.05); }
+  .cal-day-cell.selected { outline: 2px solid #326ea5; outline-offset: -2px; }
+  .cal-cell-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 4px;
+  }
+  .cal-day-num {
+    font-size: 9pt;
+    font-weight: 700;
+    color: #3b3630;
+    width: 22px;
+    height: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+  }
+  .cal-day-cell.today .cal-day-num {
+    background: #326ea5;
+    color: white;
+  }
+  .cal-cell-add-btn {
+    opacity: 0;
+    font-size: 11px;
+    font-weight: 700;
+    color: #78726c;
+    padding: 0 4px;
+    border-radius: 3px;
+    cursor: pointer;
+  }
+  .cal-day-cell:hover .cal-cell-add-btn { opacity: 0.8; }
+  .cal-cell-add-btn:hover { background: #e8e5df; color: #1a1612; }
+  .cal-cell-events {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    overflow-y: auto;
+    flex: 1;
+  }
+  .cal-chip {
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 8pt;
+    font-weight: 600;
+    color: white;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: pointer;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.12);
+    transition: opacity 0.12s;
+  }
+  .cal-chip:hover { opacity: 0.85; }
+
+  /* Week view */
+  .cal-week-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    flex: 1;
+    height: 100%;
+  }
+  .cal-week-col {
+    border-right: 1px solid #e2ded8;
+    display: flex;
+    flex-direction: column;
+    background: white;
+  }
+  .cal-week-col:last-child { border-right: none; }
+  .cal-week-hdr {
+    padding: 8px 6px;
+    text-align: center;
+    background: #f0ede8;
+    border-bottom: 1px solid #d7d4cf;
+  }
+  .cal-week-hdr-day { font-size: 8pt; font-weight: 700; color: #7a746c; }
+  .cal-week-hdr-date { font-size: 11pt; font-weight: 700; color: #231e19; margin-top: 2px; }
+  .cal-week-col.today .cal-week-hdr-date { color: #326ea5; }
+  .cal-week-events {
+    padding: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    overflow-y: auto;
+    flex: 1;
+  }
+
+  /* Day view */
+  .cal-day-view-wrap {
+    padding: 20px 24px;
+    max-width: 800px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .cal-day-title {
+    font-size: 14pt;
+    font-weight: 700;
+    color: #231e19;
+    border-bottom: 2px solid #326ea5;
+    padding-bottom: 6px;
+  }
+  .cal-day-event-card {
+    display: flex;
+    border-left: 5px solid #326ea5;
+    background: white;
+    border-radius: 6px;
+    border-top: 1px solid #e2ded8;
+    border-right: 1px solid #e2ded8;
+    border-bottom: 1px solid #e2ded8;
+    padding: 10px 14px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06);
+    cursor: pointer;
+    align-items: center;
+    gap: 14px;
+  }
+  .cal-day-event-card:hover { background: #faf8f5; }
+  .cal-day-card-time {
+    font-size: 9pt;
+    font-weight: 700;
+    color: #326ea5;
+    min-width: 110px;
+  }
+  .cal-day-card-body { flex: 1; }
+  .cal-day-card-title { font-size: 11pt; font-weight: 700; color: #231e19; }
+  .cal-day-card-loc { font-size: 9pt; color: #7a746c; margin-top: 3px; }
+  .cal-day-card-desc { font-size: 8.5pt; color: #55504a; margin-top: 4px; }
+
+  /* Agenda view */
+  .cal-agenda-view-wrap {
+    padding: 18px 24px;
+    max-width: 860px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .cal-agenda-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .cal-agenda-date-hdr {
+    font-size: 10pt;
+    font-weight: 700;
+    color: #326ea5;
+    padding-bottom: 4px;
+    border-bottom: 1px solid #e2ded8;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  /* Modal Dialog */
+  .cal-modal-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.45);
+    z-index: 2000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .cal-modal-dialog {
+    background: white;
+    width: 480px;
+    max-width: 90vw;
+    border-radius: 8px;
+    box-shadow: 0 8px 30px rgba(0,0,0,0.25);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    border: 1px solid #d2cfc8;
+  }
+  .cal-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 16px;
+    background: #f8f7f4;
+    border-bottom: 1px solid #d7d4cf;
+  }
+  .cal-modal-title { font-size: 11pt; font-weight: 700; color: #231e19; }
+  .cal-modal-close {
+    border: none;
+    background: transparent;
+    font-size: 16px;
+    font-weight: 700;
+    cursor: pointer;
+    color: #78726c;
+  }
+  .cal-modal-close:hover { color: #1a1612; }
+  .cal-modal-body {
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    max-height: 70vh;
+    overflow-y: auto;
+  }
+  .cal-field-row {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .cal-field-row-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  .cal-lbl { font-size: 8.5pt; font-weight: 600; color: #55504a; }
+  .cal-input, .cal-select, .cal-textarea {
+    padding: 6px 8px;
+    border: 1px solid #d7d4cf;
+    border-radius: 4px;
+    font-size: 9.5pt;
+    font-family: inherit;
+    color: #231e19;
+    background: white;
+    box-sizing: border-box;
+  }
+  .cal-input:focus, .cal-select:focus, .cal-textarea:focus {
+    outline: none;
+    border-color: #326ea5;
+    box-shadow: 0 0 0 2px rgba(50,110,165,0.2);
+  }
+  .cal-checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 9pt;
+    cursor: pointer;
+    color: #231e19;
+  }
+  .cal-modal-footer {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 10px 16px;
+    background: #f8f7f4;
+    border-top: 1px solid #d7d4cf;
+  }
+
+  /* Dark mode overrides for Calendar and Status */
+  .dark #page-calendar,
+  .dark .cal-modal-dialog,
+  .dark .cal-day-cell,
+  .dark .cal-week-col,
+  .dark .cal-day-event-card,
+  .dark .agenda-item,
+  .dark .status-task-card,
+  .dark .status-log-wrap,
+  .dark .sidebar-sig-card,
+  .dark .sidebar-stat-card {
+    background: #18181c;
+    color: #c8c3bc;
+    border-color: #2c2c32;
+  }
+  .dark .cal-main-toolbar,
+  .dark .cal-modal-header,
+  .dark .cal-modal-footer,
+  .dark .cal-weekday-row,
+  .dark .cal-week-hdr,
+  .dark .agenda-topbar,
+  .dark .mini-cal {
+    background: #121215;
+    border-color: #282830;
+  }
+  .dark .cal-day-cell.other-month { background: #141417; }
+  .dark .cal-day-cell:hover { background: #202025; }
+  .dark .cal-day-num,
+  .dark .cal-title-heading,
+  .dark .cal-modal-title,
+  .dark .mini-cal-title,
+  .dark .agenda-summary,
+  .dark .status-task-row,
+  .dark .cal-day-title,
+  .dark .cal-day-card-title,
+  .dark .sidebar-sig-title,
+  .dark .sidebar-stat-title {
+    color: #f0ebe4;
+  }
+  .dark .cal-btn,
+  .dark .mini-cal-btn,
+  .dark .status-act-btn,
+  .dark .cal-input,
+  .dark .cal-select,
+  .dark .cal-textarea {
+    background: #202025;
+    border-color: #383840;
+    color: #cdc8c1;
+  }
+  .dark .cal-btn:hover,
+  .dark .mini-cal-btn:hover,
+  .dark .status-act-btn:hover {
+    background: #2b2b33;
+  }
+  .dark .cal-view-modes {
+    background: #202025;
+    border-color: #383840;
+  }
+  .dark .cal-mode-btn {
+    border-right-color: #383840;
+    color: #a8a29a;
+  }
+  .dark .cal-mode-btn.selected {
+    background: #326ea5;
+    color: white;
+  }
 </style>
 </head>
 <body>
@@ -1156,6 +2415,7 @@
     <button class="tbtn sep" data-action="junk">⛔ Junk</button>
     <button class="tbtn" data-action="print">🖨 Print</button>
     <button class="tbtn sep" data-action="find">🔍 Find</button>
+    <button class="tbtn" data-open-tab="calendar">📅 Calendar</button>
     <button class="tbtn sep" data-action="open-settings">⚙ Settings</button>
     <span id="tb-spacer"></span>
     <button class="tbtn sep" id="btn-skin" data-action="switch-skin" title="Switch to Email skin">🎨 Email Skin</button>
@@ -1168,12 +2428,17 @@
     <!-- Wazoo sidebar (populated from program) -->
     <div id="wazoo">
       <div id="wazoo-tree"></div>
-      <div class="wazoo-tabs">
-        <div class="wazoo-tab selected">Mailboxes</div>
-        <div class="wazoo-tab">Signatures</div>
-        <div class="wazoo-tab">Stationery</div>
+      <div class="wazoo-tabs" id="wazoo-tabs-bar">
+        <div class="wazoo-tab selected" data-wazoo-tab="mailboxes" title="Mailboxes">📬 Mail</div>
+        <div class="wazoo-tab" data-wazoo-tab="calendar" title="Calendar">📅 Cal</div>
+        <div class="wazoo-tab" data-wazoo-tab="status" title="Tasks &amp; Status">⚡ Status</div>
+        <div class="wazoo-tab" data-wazoo-tab="signatures" title="Signatures">✍ Sig</div>
+        <div class="wazoo-tab" data-wazoo-tab="stationery" title="Stationery">📄 Stat</div>
       </div>
     </div>
+
+    <!-- Vertical Splitter between Sidebar and Main Content -->
+    <div class="split-bar-v" id="split-sidebar" data-split="sidebar" title="Drag to resize sidebar"><div class="split-grip-v"></div></div>
 
     <!-- Right panel -->
     <div id="right-panel">
@@ -1259,6 +2524,14 @@
                   </div>
                   <div class="action-arrow">›</div>
                 </div>
+                <div class="action-card" data-open-tab="calendar">
+                  <div class="action-icon action-icon-blue">📅</div>
+                  <div class="action-text">
+                    <div class="action-title">Calendar</div>
+                    <div class="action-desc">Events, schedule, and reminders</div>
+                  </div>
+                  <div class="action-arrow">›</div>
+                </div>
                 <div class="action-card" data-open-tab="filters">
                   <div class="action-icon action-icon-amber">📋</div>
                   <div class="action-text">
@@ -1307,7 +2580,7 @@
       <div class="page" id="page-in">
 
         <!-- Message list -->
-        <div class="msg-list-wrap">
+        <div class="msg-list-wrap" id="in-msg-list-wrap">
           <table class="msg-list">
             <thead>
               <tr>
@@ -1324,6 +2597,9 @@
             <tbody id="inbox-rows"></tbody>
           </table>
         </div>
+
+        <!-- Horizontal Splitter between Message List and Message Body -->
+        <div class="split-bar-h" id="split-in-list" data-split="msg-list" title="Drag to resize message list"><div class="split-grip-h"></div></div>
 
         <!-- Message header -->
         <div class="msg-header" id="inbox-hdr">
@@ -1343,7 +2619,7 @@
       <!-- ===== Page: Outbox ===== -->
       <div class="page" id="page-out">
 
-        <div class="msg-list-wrap">
+        <div class="msg-list-wrap" id="out-msg-list-wrap">
           <table class="msg-list">
             <thead>
               <tr>
@@ -1361,6 +2637,8 @@
           </table>
         </div>
 
+        <div class="split-bar-h" id="split-out-list" data-split="msg-list" title="Drag to resize message list"><div class="split-grip-h"></div></div>
+
         <div class="msg-header">
           <div><span class="lbl">From:</span> <span id="out-from"></span></div>
           <div><span class="lbl">To:</span> <span id="out-to"></span><span id="out-cc-area"></span></div>
@@ -1377,14 +2655,20 @@
       <!-- ===== Page: Contacts ===== -->
       <div class="page" id="page-contacts">
 
-        <div class="contact-list-wrap">
-          <div class="contact-search">
-            <input type="text" placeholder="🔍  Search contacts...">
+        <div class="contact-list-wrap" id="contact-list-pane">
+          <div class="contact-topbar">
+            <span class="contact-topbar-title">👥 Address Book</span>
+            <button class="contact-btn" data-action="add-contact">➕ New Contact</button>
           </div>
-          <div id="contact-list-inner"></div>
+          <div class="contact-search">
+            <input type="text" id="contact-search-input" placeholder="🔍  Search contacts...">
+          </div>
+          <div class="contact-cards-container" id="contact-list-inner"></div>
         </div>
 
-        <div class="contact-detail-wrap">
+        <div class="split-bar-v" id="split-contacts" data-split="contacts" title="Drag to resize contact list"><div class="split-grip-v"></div></div>
+
+        <div class="contact-detail-wrap" id="contact-detail-pane">
           <div id="contact-detail-inner"></div>
         </div>
 
@@ -1392,24 +2676,83 @@
 
       <!-- ===== Page: Filters ===== -->
       <div class="page" id="page-filters">
-        <div class="filters-header">
-          <span class="filters-title">📋 Mail Filters</span>
-          <span class="filters-meta" id="filters-meta"></span>
-          <button class="add-rule-btn">+ New Rule</button>
+
+        <div class="filter-list-pane" id="filter-list-pane">
+          <div class="filter-topbar">
+            <span class="filter-topbar-title">📋 Mail Filters</span>
+            <span class="filter-topbar-meta" id="filters-meta"></span>
+          </div>
+          <div class="filter-toolbar">
+            <button class="filt-tool-btn primary" data-action="add-filter">➕ New</button>
+            <button class="filt-tool-btn" data-action="edit-filter">✏ Edit</button>
+            <button class="filt-tool-btn" data-action="delete-filter">🗑 Delete</button>
+            <button class="filt-tool-btn" data-action="move-filter-up">▲ Up</button>
+            <button class="filt-tool-btn" data-action="move-filter-down">▼ Down</button>
+          </div>
+          <div class="filter-cards" id="filter-cards"></div>
         </div>
-        <div class="filter-cards" id="filter-cards"></div>
+
+        <div class="split-bar-v" id="split-filters" data-split="filters" title="Drag to resize filter rules"><div class="split-grip-v"></div></div>
+
+        <div class="filter-editor-pane" id="filter-editor-pane">
+          <div id="filter-editor-inner"></div>
+        </div>
+
       </div><!-- /page-filters -->
 
       <!-- ===== Page: Compose ===== -->
       <div class="page" id="page-compose">
+        <!-- 1. Compose Toolbar: Send/Queue/Save/Discard/Attach/Image/Link/Emoji/Spell/Print + toggles + dropdowns -->
+        <div class="compose-toolbar comp-action-bar">
+          <button class="ctbtn accent" data-action="send" title="Send Now"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 1.5l13 6.5-13 6.5 2-6.5z"/></svg></button>
+          <button class="ctbtn" data-action="queue" title="Queue for later"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M8 4v4.5l3 2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button>
+          <button class="ctbtn" data-action="save" title="Save draft"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M2.5 1.5h8.5l3 3V14a1 1 0 01-1 1h-10a1 1 0 01-1-1V2.5a1 1 0 011-1zm1 1v4h6v-4h-6zm0 7v4.5h8.5V9.5h-8.5z"/></svg></button>
+          <button class="ctbtn" data-action="attach-file" title="Attach file"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M4.5 3a2.5 2.5 0 015 0v7.5a1.5 1.5 0 01-3 0V4h1v6.5a.5.5 0 001 0V3a1.5 1.5 0 00-3 0v7.5a2.5 2.5 0 005 0V3h1v7.5a3.5 3.5 0 01-7 0V3z"/></svg></button>
+          <button class="ctbtn" data-action="format-image" title="Insert Image"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 2.5h13a1 1 0 011 1v9a1 1 0 01-1 1h-13a1 1 0 01-1-1v-9a1 1 0 011-1zm0 1v6.2l3.4-3.4a.7.7 0 011 0l2.6 2.6 3.1-3.1a.7.7 0 011 0l2 2V3.5h-13zm3.5 1a1.5 1.5 0 100 3 1.5 1.5 0 000-3z"/></svg></button>
+          <button class="ctbtn" data-action="format-link" title="Insert Link"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M6.35 10.35a.5.5 0 01-.7 0l-2.15-2.15a3 3 0 014.24-4.24l1.42 1.41a.5.5 0 11-.71.71l-1.42-1.42a2 2 0 00-2.82 2.83l2.14 2.15a.5.5 0 010 .71zm3.3-4.7a.5.5 0 01.7 0l2.15 2.15a3 3 0 01-4.24 4.24l-1.42-1.41a.5.5 0 11.71-.71l1.42 1.42a2 2 0 002.82-2.83l-2.14-2.15a.5.5 0 010-.71zm-3.15 4a.5.5 0 010-.7l3.5-3.5a.5.5 0 11.7.7l-3.5 3.5a.5.5 0 01-.7 0z"/></svg></button>
+          <button class="ctbtn" data-action="emoji" title="Insert Emoticon"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="5.5" cy="6.5" r="1"/><circle cx="10.5" cy="6.5" r="1"/><path d="M5 9.8c.8 1.4 2 1.9 3 1.9s2.2-.5 3-1.9" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button>
+          <button class="ctbtn" data-action="spell" title="Check Spelling"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M1 3.5h6v1.5H4.5v7H2.5V5H1V3.5zm11.8 3.7l-3.5 3.5-1.5-1.5-.7.7 2.2 2.2 4.2-4.2-.7-.7z"/></svg></button>
+          <button class="ctbtn" data-action="print" title="Print message"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M4 1.5h8v3H4v-3zm10 4H2a1 1 0 00-1 1v4a1 1 0 001 1h2v3h8v-3h2a1 1 0 001-1v-4a1 1 0 00-1-1zm-3 7H5V9h6v3.5zm2-5.5a.75.75 0 110-1.5.75.75 0 010 1.5z"/></svg></button>
+          <div class="comp-sep-v"></div>
+          <button class="ctbtn toggle-btn" data-action="toggle-qp" id="comp-tog-qp" title="Allow Quoted-Printable encoding">QP</button>
+          <button class="ctbtn toggle-btn" data-action="toggle-text" id="comp-tog-text" title="Send attachments as plain data">Text</button>
+          <button class="ctbtn toggle-btn" data-action="toggle-wrap" id="comp-tog-wrap" title="Word-wrap message when sent">Wrap</button>
+          <button class="ctbtn toggle-btn" data-action="toggle-keep" id="comp-tog-keep" title="Keep copy after sending">Keep</button>
+          <button class="ctbtn toggle-btn" data-action="toggle-rr" id="comp-tog-rr" title="Request return receipt">RR</button>
+          <div class="comp-sep-v"></div>
+          <div style="flex:1;"></div>
+          <select id="comp-enc-select" class="comp-select" title="Attachment encoding">
+            <option value="MIME">MIME</option>
+            <option value="BinHex">BinHex</option>
+            <option value="Uuencode">Uuencode</option>
+          </select>
+          <select id="comp-pri-select" class="comp-select" title="Priority">
+            <option value="Highest">Highest</option>
+            <option value="High">High</option>
+            <option value="Normal" selected>Normal</option>
+            <option value="Low">Low</option>
+            <option value="Lowest">Lowest</option>
+          </select>
+          <select id="comp-sig-select" class="comp-select" title="Signature">
+            <option value="None">None</option>
+            <option value="Standard" selected>Standard</option>
+            <option value="Alternate">Alternate</option>
+          </select>
+        </div>
+
+        <!-- 2. Header Grid: To/From/Subject/Cc/Bcc/Attach -->
         <div class="compose-header">
-          <div class="compose-row">
-            <span class="compose-label">From:</span>
-            <span class="compose-plain" id="compose-from"></span>
-          </div>
           <div class="compose-row">
             <span class="compose-label">To:</span>
             <input class="compose-value" id="compose-to" type="text">
+          </div>
+          <div class="compose-row">
+            <span class="compose-label">From:</span>
+            <select class="compose-value" id="compose-from"></select>
+          </div>
+          <div class="compose-row">
+            <span class="compose-label">Subject:</span>
+            <input class="compose-value" id="compose-subj" type="text">
           </div>
           <div class="compose-row">
             <span class="compose-label">Cc:</span>
@@ -1420,10 +2763,6 @@
             <input class="compose-value" id="compose-bcc" type="text">
           </div>
           <div class="compose-row">
-            <span class="compose-label">Subject:</span>
-            <input class="compose-value" id="compose-subj" type="text">
-          </div>
-          <div class="compose-row">
             <span class="compose-label">Attach:</span>
             <span class="compose-plain" id="compose-attach" style="color:#78726c;"></span>
           </div>
@@ -1432,30 +2771,84 @@
             <span class="compose-plain" id="compose-priority"></span>
           </div>
         </div>
-        <div class="compose-toolbar">
-          <button class="ctbtn accent" data-action="send">✉ Send</button>
-          <button class="ctbtn" data-action="queue">Queue</button>
-          <button class="ctbtn sep" data-action="discard">Discard</button>
-          <button class="ctbtn" style="font-weight:bold">B</button>
-          <button class="ctbtn" style="font-style:italic">I</button>
-          <button class="ctbtn" style="text-decoration:underline">U</button>
-          <button class="ctbtn sep"><s>S</s></button>
-          <button class="ctbtn">A+</button>
-          <button class="ctbtn sep">A−</button>
-          <button class="ctbtn sep">🎨</button>
-          <button class="ctbtn">•</button>
-          <button class="ctbtn sep">1.</button>
-          <button class="ctbtn">»</button>
-          <button class="ctbtn">«</button>
-          <button class="ctbtn sep">—</button>
-          <button class="ctbtn sep">🔗</button>
-          <button class="ctbtn">📎 Attach</button>
-          <button class="ctbtn">Signature</button>
+
+        <!-- 3. Formatting Bar at bottom of header, right above text body -->
+        <div class="comp-fmt-bar" id="compose-fmt-bar">
+          <button class="ctbtn" data-command="bold" title="Bold (Ctrl+B)"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M3.5 2h5a3.5 3.5 0 012.8 5.6A3.5 3.5 0 018.5 14H3.5V2zm2.2 2v3.3h2.6a1.65 1.65 0 000-3.3H5.7zm0 5.3V12h3a1.65 1.65 0 000-3.3h-3z"/></svg></button>
+          <button class="ctbtn" data-command="italic" title="Italic (Ctrl+I)"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M6 2h6v2h-2.1l-2.8 8H9v2H3v-2h2.1l2.8-8H6V2z"/></svg></button>
+          <button class="ctbtn" data-command="underline" title="Underline (Ctrl+U)"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M3.5 2v6a4.5 4.5 0 009 0V2h-2v6a2.5 2.5 0 01-5 0V2h-2zm-1.5 11h12v1.8H2V13z"/></svg></button>
+          <button class="ctbtn" data-command="removeFormat" title="Clear Formatting"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M2 3h10v2H8v9H6V5H2V3zm10 4.5l1.5 1.5 1.5-1.5 1 1-1.5 1.5 1.5 1.5-1 1-1.5-1.5-1.5 1.5-1-1 1.5-1.5-1.5-1.5 1-1z"/></svg></button>
+          <div class="comp-sep-v"></div>
+          <select id="comp-color-select" class="comp-select" title="Text Color" data-command="foreColor">
+            <option value="#000000" selected>⚫ Black</option>
+            <option value="#c0392b">🔴 Red</option>
+            <option value="#2980b9">🔵 Blue</option>
+            <option value="#27ae60">🟢 Green</option>
+            <option value="#8e44ad">🟣 Purple</option>
+            <option value="#d35400">🟠 Orange</option>
+            <option value="#7f8c8d">⚪ Gray</option>
+          </select>
+          <select id="comp-font-select" class="comp-select" title="Font" data-command="fontName">
+            <option value="Sans" selected>Sans</option>
+            <option value="Serif">Serif</option>
+            <option value="Monospace">Monospace</option>
+            <option value="Helvetica">Helvetica</option>
+            <option value="Times">Times</option>
+            <option value="Courier">Courier</option>
+          </select>
+          <select id="comp-size-select" class="comp-select" title="Font Size" data-command="fontSize">
+            <option value="8">8</option>
+            <option value="10">10</option>
+            <option value="12" selected>12</option>
+            <option value="14">14</option>
+            <option value="16">16</option>
+            <option value="18">18</option>
+            <option value="20">20</option>
+            <option value="24">24</option>
+            <option value="28">28</option>
+            <option value="36">36</option>
+          </select>
+          <div class="comp-sep-v"></div>
+          <button class="ctbtn" data-command="justifyLeft" title="Align Left"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M2 2.5h12v1.5H2V2.5zm0 3.5h7.5v1.5H2V6zm0 3.5h12v1.5H2V9.5zm0 3.5h7.5V14.5H2V13z"/></svg></button>
+          <button class="ctbtn" data-command="justifyCenter" title="Center"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M2 2.5h12v1.5H2V2.5zm2.2 3.5h7.5v1.5H4.2V6zm-2.2 3.5h12v1.5H2V9.5zm2.2 3.5h7.5V14.5H4.2V13z"/></svg></button>
+          <button class="ctbtn" data-command="justifyRight" title="Align Right"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M2 2.5h12v1.5H2V2.5zm4.5 3.5h7.5v1.5H6.5V6zm-4.5 3.5h12v1.5H2V9.5zm4.5 3.5h7.5V14.5H6.5V13z"/></svg></button>
+          <div class="comp-sep-v"></div>
+          <button class="ctbtn" data-command="indent" title="Indent"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 2.5h13v1.5h-13V2.5zm5.5 3.5h7.5V7.5H7V6zm0 3.5h7.5V11H7V9.5zm-5.5 3.5h13V14.5h-13V13zm.5-7.5l3.5 3-3.5 3V5.5z"/></svg></button>
+          <button class="ctbtn" data-command="outdent" title="Outdent"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M1.5 2.5h13v1.5h-13V2.5zm5.5 3.5h7.5V7.5H7V6zm0 3.5h7.5V11H7V9.5zm-5.5 3.5h13V14.5h-13V13zm-1.5-1.5l-3.5 3 3.5 3V11.5z"/></svg></button>
+          <button class="ctbtn" data-command="insertUnorderedList" title="Bullet List"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><circle cx="3" cy="3.5" r="1.5"/><path d="M6.5 2.75h8v1.5h-8v-1.5z"/><circle cx="3" cy="8" r="1.5"/><path d="M6.5 7.25h8v1.5h-8v-1.5z"/><circle cx="3" cy="12.5" r="1.5"/><path d="M6.5 11.75h8v1.5h-8v-1.5z"/></svg></button>
+          <div class="comp-sep-v"></div>
+          <button class="ctbtn" data-command="formatBlock" data-value="blockquote" title="Increase Quote Level"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M3 2v12h1.8V2H3zm3.5 0v12h1.8V2H6.5zm5 4l4 4-4 4V6z"/></svg></button>
+          <button class="ctbtn" data-command="formatBlock" data-value="div" title="Decrease Quote Level"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M11.2 2v12H13V2h-1.8zm-3.5 0v12h1.8V2H7.7zM4.5 6l-4 4 4 4V6z"/></svg></button>
+          <button class="ctbtn" data-command="insertHorizontalRule" title="Insert Horizontal Rule"><svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M1 7.25h14v1.5H1v-1.5zM3 3h10v1H3V3zm0 9h10v1H3v-1z" opacity="0.6"/></svg></button>
         </div>
+
+        <!-- 4. Body editor filling remaining space -->
         <div class="compose-editor">
           <div class="compose-editor-inner" id="compose-body" contenteditable="true"></div>
         </div>
       </div><!-- /page-compose -->
+
+      <!-- ===== Page: Calendar ===== -->
+      <div class="page" id="page-calendar">
+        <div class="cal-main-toolbar">
+          <div class="cal-nav-group">
+            <button class="cal-btn" data-action="cal-prev" title="Previous month/week/day">◀</button>
+            <button class="cal-btn" data-action="cal-today" title="Go to today">Today</button>
+            <button class="cal-btn" data-action="cal-next" title="Next month/week/day">▶</button>
+            <span class="cal-title-heading" id="cal-heading-title">October 2026</span>
+          </div>
+          <div class="cal-view-modes">
+            <button class="cal-mode-btn selected" data-cal-view="month" id="cal-mode-month">Month</button>
+            <button class="cal-mode-btn" data-cal-view="week" id="cal-mode-week">Week</button>
+            <button class="cal-mode-btn" data-cal-view="day" id="cal-mode-day">Day</button>
+            <button class="cal-mode-btn" data-cal-view="agenda" id="cal-mode-agenda">Agenda</button>
+          </div>
+          <div class="cal-actions-group">
+            <button class="cal-btn primary" data-action="cal-new-event">➕ New Event</button>
+          </div>
+        </div>
+        <div class="cal-view-content" id="cal-view-container"></div>
+      </div><!-- /page-calendar -->
 
     </div><!-- /right-panel -->
   </div><!-- /content -->
@@ -1480,6 +2873,82 @@
   <div class="ctx-item" data-ctx-action="delete">🗑 Delete</div>
   <div class="ctx-item" data-ctx-action="empty-trash">🧹 Empty Trash</div>
   <div class="ctx-item" data-ctx-action="compact">⚡ Compact Mailbox</div>
+</div>
+
+<!-- Calendar Event Dialog Modal -->
+<div class="cal-modal-overlay" id="cal-event-modal" style="display:none;">
+  <div class="cal-modal-dialog">
+    <div class="cal-modal-header">
+      <span class="cal-modal-title" id="cal-modal-title">New Event</span>
+      <button class="cal-modal-close" data-action="cal-modal-close">×</button>
+    </div>
+    <div class="cal-modal-body">
+      <div class="cal-field-row">
+        <label class="cal-lbl">Summary / Title</label>
+        <input type="text" id="cal-ev-summary" placeholder="e.g. Project Review Meeting" class="cal-input">
+      </div>
+      <div class="cal-field-row-grid">
+        <div>
+          <label class="cal-lbl">Date (YYYY-MM-DD)</label>
+          <input type="text" id="cal-ev-date" placeholder="YYYY-MM-DD" class="cal-input">
+        </div>
+        <div>
+          <label class="cal-lbl">All Day</label>
+          <div style="padding-top:4px;">
+            <label class="cal-checkbox-label">
+              <input type="checkbox" id="cal-ev-allday"> All day event
+            </label>
+          </div>
+        </div>
+      </div>
+      <div class="cal-field-row-grid" id="cal-time-fields">
+        <div>
+          <label class="cal-lbl">Start Time (HH:MM)</label>
+          <input type="text" id="cal-ev-stime" placeholder="09:00" class="cal-input">
+        </div>
+        <div>
+          <label class="cal-lbl">End Time (HH:MM)</label>
+          <input type="text" id="cal-ev-etime" placeholder="10:00" class="cal-input">
+        </div>
+      </div>
+      <div class="cal-field-row">
+        <label class="cal-lbl">Location</label>
+        <input type="text" id="cal-ev-location" placeholder="e.g. Conference Room B, Zoom..." class="cal-input">
+      </div>
+      <div class="cal-field-row-grid">
+        <div>
+          <label class="cal-lbl">Category / Color</label>
+          <select id="cal-ev-color" class="cal-select">
+            <option value="#326ea5">🔵 Work (Classic Blue)</option>
+            <option value="#2ea043">🟢 Personal (Green)</option>
+            <option value="#9b32a5">🟣 Important (Purple)</option>
+            <option value="#d29922">🟡 Planning (Amber)</option>
+            <option value="#d2372d">🔴 Critical (Red)</option>
+            <option value="#32a582">Teal</option>
+          </select>
+        </div>
+        <div>
+          <label class="cal-lbl">Reminder</label>
+          <select id="cal-ev-reminder" class="cal-select">
+            <option value="0">None</option>
+            <option value="5">5 minutes before</option>
+            <option value="15" selected>15 minutes before</option>
+            <option value="30">30 minutes before</option>
+            <option value="60">1 hour before</option>
+          </select>
+        </div>
+      </div>
+      <div class="cal-field-row">
+        <label class="cal-lbl">Description / Notes</label>
+        <textarea id="cal-ev-desc" rows="3" class="cal-textarea" placeholder="Agenda or notes..."></textarea>
+      </div>
+    </div>
+    <div class="cal-modal-footer">
+      <button class="cal-btn danger" id="cal-btn-delete" data-action="cal-delete-event" style="display:none;margin-right:auto;">🗑 Delete</button>
+      <button class="cal-btn" data-action="cal-modal-close">Cancel</button>
+      <button class="cal-btn primary" data-action="cal-save-event">Save Event</button>
+    </div>
+  </div>
 </div>
 
 </body>

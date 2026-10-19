@@ -275,6 +275,120 @@
     flex-shrink: 0;
   }
 
+  /* ── PERSONALITIES / ACCOUNTS LAYOUT ── */
+  .pers-layout {
+    display: grid;
+    grid-template-columns: 240px 1fr;
+    gap: 16px;
+    align-items: start;
+  }
+  .pers-list-col {
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 8px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  .pers-list-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 12px;
+    background: var(--sidebar-header-bg);
+    border-bottom: 1px solid var(--border-color);
+    font-weight: 700;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+  }
+  .pers-list {
+    display: flex;
+    flex-direction: column;
+    max-height: 440px;
+    overflow-y: auto;
+    padding: 6px;
+    gap: 4px;
+  }
+  .pers-item {
+    display: flex;
+    flex-direction: column;
+    padding: 8px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    user-select: none;
+    border: 1px solid transparent;
+    transition: background 0.12s;
+  }
+  .pers-item:hover {
+    background: var(--sidebar-item-hover);
+  }
+  .pers-item.selected {
+    background: var(--accent);
+    color: var(--accent-text);
+  }
+  .pers-item-name {
+    font-weight: 600;
+    font-size: 12.5px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .pers-item-detail {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 2px;
+  }
+  .pers-item.selected .pers-item-detail {
+    color: rgba(255, 255, 255, 0.85);
+  }
+  .pers-badge-gold {
+    background: #d97706;
+    color: white;
+    font-size: 9px;
+    font-weight: 700;
+    padding: 1px 5px;
+    border-radius: 4px;
+    text-transform: uppercase;
+  }
+  .pers-badge-dim {
+    background: rgba(0,0,0,0.08);
+    color: var(--text-muted);
+    font-size: 9px;
+    font-weight: 600;
+    padding: 1px 5px;
+    border-radius: 4px;
+  }
+  .pers-btn-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border-color);
+  }
+  .btn-act.danger {
+    color: #dc2626;
+  }
+  .btn-act.danger:hover {
+    background: rgba(220, 38, 38, 0.1);
+    color: #b91c1c;
+  }
+  .btn-mini {
+    padding: 3px 8px;
+    font-size: 11px;
+    border-radius: 4px;
+    border: 1px solid var(--border-color);
+    background: var(--card-bg);
+    color: var(--text-main);
+    cursor: pointer;
+    font-weight: 600;
+  }
+  .btn-mini:hover {
+    background: var(--sidebar-item-hover);
+  }
+
   /* ── FOOTER ACTION BAR ── */
   .settings-footer {
     display: flex; align-items: center; justify-content: space-between;
@@ -396,47 +510,47 @@
         <div class="settings-panel" id="panel-checking_mail">
           <div class="cfg-group">
             <div class="cfg-group-title">Account / Server Info</div>
-            <div class="cfg-row"><span class="cfg-lbl">User Name:</span><input class="cfg-input" type="text" value="youness"></div>
-            <div class="cfg-row"><span class="cfg-lbl">Mail Server:</span><input class="cfg-input" type="text" value="mail.eudora.org"></div>
+            <div class="cfg-row"><span class="cfg-lbl">User Name:</span><input class="cfg-input" id="chk-username" type="text" value="youness"></div>
+            <div class="cfg-row"><span class="cfg-lbl">Mail Server:</span><input class="cfg-input" id="chk-pop-server" type="text" value="mail.eudora.org"></div>
             <div class="cfg-row">
               <span class="cfg-lbl">Mail Protocol:</span>
-              <div class="cfg-radio-group">
-                <label class="cfg-radio"><input type="radio" name="proto" checked> POP</label>
-                <label class="cfg-radio"><input type="radio" name="proto"> IMAP</label>
-              </div>
+              <select class="cfg-select" id="chk-proto">
+                <option value="POP">POP</option>
+                <option value="IMAP">IMAP</option>
+              </select>
             </div>
             <div class="cfg-row">
               <span class="cfg-lbl">Authentication:</span>
-              <select class="cfg-select">
-                <option selected>Passwords</option>
-                <option>Kerberos</option>
-                <option>APOP</option>
-                <option>CRAM-MD5</option>
+              <select class="cfg-select" id="chk-auth">
+                <option value="passwords" selected>Passwords</option>
+                <option value="kerberos">Kerberos</option>
+                <option value="apop">APOP</option>
+                <option value="cram-md5">CRAM-MD5</option>
               </select>
             </div>
-            <label class="cfg-check"><input type="checkbox"> Overlap IMAP/POP commands for faster checks</label>
+            <label class="cfg-check"><input type="checkbox" id="chk-overlap"> Overlap IMAP/POP commands for faster checks</label>
           </div>
           <div class="cfg-group">
             <div class="cfg-group-title">Connection</div>
             <div class="cfg-row">
               <span class="cfg-lbl">Check for mail every:</span>
-              <input class="cfg-num" type="number" value="15">
+              <input class="cfg-num" id="chk-interval" type="number" value="15" min="1" max="999">
               <span class="cfg-hint">minutes (0 = manual only)</span>
             </div>
-            <label class="cfg-check"><input type="checkbox" checked> Don't auto-check when using battery</label>
-            <label class="cfg-check"><input type="checkbox" checked> Send queued mail whenever checking mail</label>
+            <label class="cfg-check"><input type="checkbox" id="chk-battery" checked> Don't auto-check when using battery</label>
+            <label class="cfg-check"><input type="checkbox" id="chk-send-on-check" checked> Send queued mail whenever checking mail</label>
           </div>
           <div class="cfg-group">
             <div class="cfg-group-title">Mail Management (POP)</div>
             <div class="cfg-row">
-              <label class="cfg-check"><input type="checkbox" checked> Leave mail on server for</label>
-              <input class="cfg-num" type="number" value="14">
+              <label class="cfg-check"><input type="checkbox" id="chk-leave-server" checked> Leave mail on server for</label>
+              <input class="cfg-num" id="chk-leave-days" type="number" value="14" min="0" max="999">
               <span class="cfg-hint">days</span>
             </div>
-            <label class="cfg-check"><input type="checkbox" checked> Delete from server when emptied from Trash</label>
+            <label class="cfg-check"><input type="checkbox" id="chk-delete-trash" checked> Delete from server when emptied from Trash</label>
             <div class="cfg-row">
-              <label class="cfg-check"><input type="checkbox"> Skip messages over</label>
-              <input class="cfg-num" type="number" value="500">
+              <label class="cfg-check"><input type="checkbox" id="chk-skip-size"> Skip messages over</label>
+              <input class="cfg-num" id="chk-skip-kb" type="number" value="500" min="0" max="99999">
               <span class="cfg-hint">KB</span>
             </div>
           </div>
@@ -446,19 +560,18 @@
         <div class="settings-panel" id="panel-sending_mail">
           <div class="cfg-group">
             <div class="cfg-group-title">SMTP Server</div>
-            <div class="cfg-row"><span class="cfg-lbl">Email Address:</span><input class="cfg-input" type="text" value="youness@eudora.org"></div>
-            <div class="cfg-row"><span class="cfg-lbl">SMTP Server:</span><input class="cfg-input" type="text" value="smtp.eudora.org"></div>
-            <div class="cfg-row"><span class="cfg-lbl">Default Domain:</span><input class="cfg-input" type="text" value="eudora.org"></div>
-            <label class="cfg-check"><input type="checkbox" checked> Use submission port (587)</label>
-            <label class="cfg-check"><input type="checkbox" checked> Allow authentication (SMTP AUTH)</label>
+            <div class="cfg-row"><span class="cfg-lbl">Email Address:</span><input class="cfg-input" id="send-email" type="text" value="youness@eudora.org"></div>
+            <div class="cfg-row"><span class="cfg-lbl">SMTP Server:</span><input class="cfg-input" id="send-smtp" type="text" value="smtp.eudora.org"></div>
+            <div class="cfg-row"><span class="cfg-lbl">Default Domain:</span><input class="cfg-input" id="send-domain" type="text" value="eudora.org"></div>
+            <label class="cfg-check"><input type="checkbox" id="send-sub-port" checked> Use submission port (587)</label>
+            <label class="cfg-check"><input type="checkbox" id="send-auth" checked> Allow authentication (SMTP AUTH)</label>
           </div>
           <div class="cfg-group">
             <div class="cfg-group-title">Sending Behavior</div>
-            <label class="cfg-check"><input type="checkbox" checked> Immediate send (send messages immediately on queue)</label>
-            <label class="cfg-check"><input type="checkbox" checked> Send on check</label>
-            <label class="cfg-check"><input type="checkbox" checked> Fix curly quotes</label>
-            <label class="cfg-check"><input type="checkbox" checked> Keep copies of outgoing mail</label>
-            <label class="cfg-check"><input type="checkbox"> Automatically FCC to original mailbox</label>
+            <label class="cfg-check"><input type="checkbox" id="send-immediate" checked> Immediate send (send messages immediately on queue)</label>
+            <label class="cfg-check"><input type="checkbox" id="send-on-chk" checked> Send on check</label>
+            <label class="cfg-check"><input type="checkbox" id="send-curly" checked> Fix curly quotes</label>
+            <label class="cfg-check"><input type="checkbox" id="send-fcc" checked> Keep copies of outgoing mail</label>
           </div>
         </div>
 
@@ -784,17 +897,54 @@
 
         <!-- 19. ACCOUNTS & PERSONALITIES -->
         <div class="settings-panel" id="panel-accounts">
-          <div class="cfg-group">
-            <div class="cfg-group-title">Dominant Personality</div>
-            <div class="cfg-row"><span class="cfg-lbl">Personality Name:</span><input class="cfg-input" type="text" value="Dominant"></div>
-            <div class="cfg-row"><span class="cfg-lbl">Real Name:</span><input class="cfg-input" type="text" value="Youness El Andaloussi"></div>
-            <div class="cfg-row"><span class="cfg-lbl">Return Address:</span><input class="cfg-input" type="text" value="youness@eudora.org"></div>
-            <div class="cfg-row"><span class="cfg-lbl">Incoming Server:</span><input class="cfg-input" type="text" value="mail.eudora.org"></div>
-            <div class="cfg-row"><span class="cfg-lbl">SMTP Server:</span><input class="cfg-input" type="text" value="smtp.eudora.org"></div>
-          </div>
-          <div class="cfg-group">
-            <div class="cfg-group-title">Additional Personalities</div>
-            <div class="cfg-hint">Work (youness@webcore.dev) · Open Source (youness@rust-lang.org)</div>
+          <div class="pers-layout">
+            <div class="pers-list-col">
+              <div class="pers-list-header">
+                <span>Personalities</span>
+                <button class="btn-mini" data-action="add-personality" title="Add new personality">➕ Add</button>
+              </div>
+              <div class="pers-list" id="pers-list-container">
+                <!-- Dynamically populated -->
+              </div>
+            </div>
+            <div class="pers-detail-col">
+              <div class="cfg-group">
+                <div class="cfg-group-title" id="pers-detail-title">Edit Personality: Dominant</div>
+                <div class="cfg-row"><span class="cfg-lbl">Personality Name:</span><input class="cfg-input" id="pers-name" type="text" value="Dominant"></div>
+                <div class="cfg-row"><span class="cfg-lbl">Real Name:</span><input class="cfg-input" id="pers-realname" type="text" value=""></div>
+                <div class="cfg-row"><span class="cfg-lbl">Email Address:</span><input class="cfg-input" id="pers-email" type="text" value=""></div>
+                <div class="cfg-row">
+                  <span class="cfg-lbl">Account Type:</span>
+                  <select class="cfg-select" id="pers-type">
+                    <option value="POP">POP</option>
+                    <option value="IMAP">IMAP</option>
+                  </select>
+                </div>
+                <div class="cfg-row"><span class="cfg-lbl">Incoming Server:</span><input class="cfg-input" id="pers-server" type="text" value=""></div>
+                <div class="cfg-row"><span class="cfg-lbl">User Name:</span><input class="cfg-input" id="pers-username" type="text" value=""></div>
+                <div class="cfg-row"><span class="cfg-lbl">SMTP Server:</span><input class="cfg-input" id="pers-smtp" type="text" value=""></div>
+                <div class="cfg-row">
+                  <span class="cfg-lbl">Check Interval:</span>
+                  <input class="cfg-num" id="pers-interval" type="number" value="15" min="1" max="999">
+                  <span class="cfg-hint">minutes</span>
+                </div>
+                <div class="cfg-row">
+                  <span class="cfg-lbl">SSL Security:</span>
+                  <select class="cfg-select" id="pers-ssl">
+                    <option value="0">Off (No SSL)</option>
+                    <option value="1">If Available (STARTTLS)</option>
+                    <option value="2">Required (Alternate Port)</option>
+                  </select>
+                </div>
+                <label class="cfg-check"><input type="checkbox" id="pers-leave" checked> Leave Mail on Server</label>
+                <label class="cfg-check"><input type="checkbox" id="pers-enabled" checked> Personality is Active</label>
+                <div class="pers-btn-row">
+                  <button class="btn-act primary" data-action="save-personality">💾 Save Personality</button>
+                  <button class="btn-act" data-action="set-dominant-personality" id="pers-btn-dominant">⭐ Set as Dominant</button>
+                  <button class="btn-act danger" data-action="delete-personality" id="pers-btn-delete">🗑 Delete</button>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -804,29 +954,29 @@
             <div class="cfg-group-title">TLS / SSL Security Mode</div>
             <div class="cfg-row">
               <span class="cfg-lbl">SSL when Receiving (POP):</span>
-              <select class="cfg-select">
-                <option>Never</option>
-                <option>If Available, STARTTLS</option>
-                <option selected>Required, Alternate Port (995)</option>
+              <select class="cfg-select" id="ssl-pop-mode">
+                <option value="0">Off (No SSL)</option>
+                <option value="1">If Available, STARTTLS</option>
+                <option value="2">Required, Alternate Port (995)</option>
               </select>
             </div>
             <div class="cfg-row">
               <span class="cfg-lbl">SSL when Sending (SMTP):</span>
-              <select class="cfg-select">
-                <option>Never</option>
-                <option selected>Required, STARTTLS (587)</option>
-                <option>Required, Alternate Port (465)</option>
+              <select class="cfg-select" id="ssl-smtp-mode">
+                <option value="0">Off (No SSL)</option>
+                <option value="1">Required, STARTTLS (587)</option>
+                <option value="2">Required, Alternate Port (465)</option>
               </select>
             </div>
             <div class="cfg-row">
               <span class="cfg-lbl">SSL for IMAP:</span>
-              <select class="cfg-select">
-                <option>Never</option>
-                <option>If Available, STARTTLS</option>
-                <option selected>Required, Alternate Port (993)</option>
+              <select class="cfg-select" id="ssl-imap-mode">
+                <option value="0">Off (No SSL)</option>
+                <option value="1">If Available, STARTTLS</option>
+                <option value="2">Required, Alternate Port (993)</option>
               </select>
             </div>
-            <label class="cfg-check"><input type="checkbox" checked> Verify server TLS certificates against system root store</label>
+            <label class="cfg-check"><input type="checkbox" id="ssl-verify" checked> Verify server TLS certificates against system root store</label>
           </div>
         </div>
 
