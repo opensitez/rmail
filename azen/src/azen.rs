@@ -8,12 +8,18 @@ use webcore::Document;
 const EUDORA_HTML: &str = include_str!("html/eudora.html");
 const EMAIL_HTML: &str = include_str!("html/email.html");
 const SETTINGS_HTML: &str = include_str!("html/settings.html");
+const WIZARD_HTML: &str = include_str!("html/wizard.html");
+static WIZ_WELCOME_DATA_URL: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+    let b64 = include_str!("html/WizWelcome.b64").trim();
+    format!("data:image/png;base64,{b64}")
+});
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Skin {
     Eudora,
     Email,
     Settings,
+    Wizard,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -60,9 +66,66 @@ struct Mailbox {
 
 #[derive(Clone, Debug)]
 struct LabelDef {
-    name: &'static str,
-    color: &'static str,
-    bg_rgba: &'static str,
+    name: String,
+    color: String,
+    bg_rgba: String,
+}
+
+const DEFAULT_LABELS: &[(&str, &str, &str)] = &[
+    ("Work", "#5b5fc7", "rgba(91,95,199,0.15)"),
+    ("Personal", "#27ae60", "rgba(39,174,96,0.15)"),
+    ("Urgent", "#e74c3c", "rgba(231,76,60,0.15)"),
+    ("Finance", "#f39c12", "rgba(243,156,18,0.15)"),
+    ("Dev", "#3498db", "rgba(52,152,219,0.15)"),
+    ("Design", "#9b59b6", "rgba(155,89,182,0.15)"),
+    ("Team", "#1abc9c", "rgba(26,188,156,0.15)"),
+];
+
+fn load_labels_from_conf(conf: &macmbx::conf::Conf) -> Vec<LabelDef> {
+    (0..7).map(|i| {
+        let (def_name, def_color, def_bg) = DEFAULT_LABELS[i];
+        let name = conf.get("labels", &format!("label_{}", i))
+            .or_else(|| conf.get("Labels", &format!("Label{}", i + 1)))
+            .unwrap_or(def_name)
+            .to_string();
+        let color = conf.get("labels", &format!("color_{}", i))
+            .or_else(|| conf.get("Labels", &format!("Color{}", i + 1)))
+            .unwrap_or(def_color)
+            .to_string();
+        let bg_rgba = conf.get("labels", &format!("bg_{}", i))
+            .unwrap_or(def_bg)
+            .to_string();
+        LabelDef { name, color, bg_rgba }
+    }).collect()
+}
+
+fn get_user_identity_from_conf(conf: &macmbx::conf::Conf) -> String {
+    let dominant = conf.get_dominant();
+    if !dominant.email.is_empty() && dominant.email != "you@example.com" && dominant.email != "steve@qualcomm.com" {
+        if !dominant.real_name.is_empty() && dominant.real_name != "You" {
+            format!("{} <{}>", dominant.real_name, dominant.email)
+        } else {
+            dominant.email
+        }
+    } else {
+        let name = conf.get("sending_mail", "real_name")
+            .or_else(|| conf.get("Settings", "RealName"))
+            .unwrap_or("")
+            .trim();
+        let email = conf.get("sending_mail", "email_address")
+            .or_else(|| conf.get("Settings", "ReturnAddress"))
+            .unwrap_or("")
+            .trim();
+        if !email.is_empty() && email != "you@example.com" && email != "steve@qualcomm.com" {
+            if !name.is_empty() && name != "You" {
+                format!("{} <{}>", name, email)
+            } else {
+                email.to_string()
+            }
+        } else {
+            String::new()
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -87,7 +150,7 @@ struct MailMessage {
     flagged: bool,
     avatar_initials: String,
     avatar_color: &'static str,
-    labels: Vec<&'static str>,
+    labels: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -235,7 +298,7 @@ impl Default for ComposeDraft {
     fn default() -> Self {
         Self {
             title: "✏ New Message".to_string(),
-            from: "You <you@example.com>".to_string(),
+            from: String::new(),
             to: String::new(),
             cc: String::new(),
             bcc: String::new(),
@@ -318,8 +381,93 @@ struct AppState {
     cal_modal_open: bool,
     cal_is_new_event: bool,
     cal_editing_uid: String,
-    status_tasks: Vec<StatusTask>,
     status_logs: Vec<StatusLog>,
+    wizard: WizardState,
+    wizard_modal_open: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum WizardFlow {
+    Standard,
+    Detect,
+    Advanced,
+    Import,
+}
+
+#[derive(Clone, Debug)]
+struct WizardState {
+    is_dominant: bool,
+    step: usize,
+    persona_name: String,
+    real_name: String,
+    return_address: String,
+    login_name: String,
+    password: String,
+    provider: String,
+    incoming_protocol: String,
+    incoming_server: String,
+    incoming_port: u16,
+    incoming_ssl: bool,
+    incoming_test: bool,
+    smtp_server: String,
+    smtp_port: u16,
+    smtp_ssl: bool,
+    smtp_auth_allowed: bool,
+    smtp_test: bool,
+    account_choice: usize,
+    flow: WizardFlow,
+}
+
+impl WizardState {
+    fn new_dominant() -> Self {
+        Self {
+            is_dominant: true,
+            step: 0,
+            persona_name: String::new(),
+            real_name: String::new(),
+            return_address: String::new(),
+            login_name: String::new(),
+            password: String::new(),
+            provider: "gmail".to_string(),
+            incoming_protocol: "IMAP".to_string(),
+            incoming_server: String::new(),
+            incoming_port: 993,
+            incoming_ssl: true,
+            incoming_test: false,
+            smtp_server: String::new(),
+            smtp_port: 465,
+            smtp_ssl: true,
+            smtp_auth_allowed: true,
+            smtp_test: false,
+            account_choice: 0,
+            flow: WizardFlow::Standard,
+        }
+    }
+
+    fn new_personality() -> Self {
+        Self {
+            is_dominant: false,
+            step: 1, // Skip welcome page for personality creation
+            persona_name: String::new(),
+            real_name: String::new(),
+            return_address: String::new(),
+            login_name: String::new(),
+            password: String::new(),
+            provider: "gmail".to_string(),
+            incoming_protocol: "IMAP".to_string(),
+            incoming_server: String::new(),
+            incoming_port: 993,
+            incoming_ssl: true,
+            incoming_test: false,
+            smtp_server: String::new(),
+            smtp_port: 465,
+            smtp_ssl: true,
+            smtp_auth_allowed: true,
+            smtp_test: false,
+            account_choice: 0,
+            flow: WizardFlow::Standard,
+        }
+    }
 }
 
 const AVATAR_COLORS: &[&str] = &[
@@ -374,251 +522,6 @@ fn resolve_data_dir() -> PathBuf {
     let local = PathBuf::from(".geudora");
     let _ = std::fs::create_dir_all(&local);
     local
-}
-
-const SEED_IN_1: &[u8] = b"From: Steve Dorner <sdorner@qualcomm.com>\r\n\
-To: you@example.com\r\n\
-Cc: eudora-team@qualcomm.com\r\n\
-Subject: Welcome to Eudora 2026!\r\n\
-Date: Sat, 7 Mar 2026 09:15:00 -0800\r\n\
-Content-Type: text/html; charset=utf-8\r\n\
-\r\n\
-<h3 style=\"color:#326ea5;margin-top:0\">Welcome to the all-new Eudora!</h3>\r\n\
-<p>We've rebuilt the classic email client you loved from the ground up, powered by a modern HTML/CSS rendering engine.</p>\r\n\
-<p><b>What's new in Eudora 2026:</b></p>\r\n\
-<ul>\r\n\
-  <li><b>Rich HTML Email</b> \xE2\x80\x94 Full CSS styling, tables, and embedded images</li>\r\n\
-  <li><b>Wazoo Panels</b> \xE2\x80\x94 Dockable tabbed mailbox &amp; tool panels</li>\r\n\
-  <li><b>Lightning Filter Engine</b> \xE2\x80\x94 100x faster rule processing</li>\r\n\
-  <li><b>Address Book</b> \xE2\x80\x94 Integrated contact management with quick-search</li>\r\n\
-  <li><b>Dark Mode</b> \xE2\x80\x94 Easy on the eyes for late-night email sessions</li>\r\n\
-</ul>\r\n\
-<p>As I always said: <i>\"Bringing Mail to the Masses.\"</i></p>\r\n\
-<p>Best regards,<br><b>Steve Dorner</b><br><span style=\"font-size:9pt;opacity:0.6\">Creator of Eudora \xE2\x80\xA2 Qualcomm Inc.</span></p>\r\n";
-
-const SEED_IN_2: &[u8] = b"From: Alan Strider <astrider@example.com>\r\n\
-To: you@example.com\r\n\
-Cc: finance@example.com\r\n\
-Subject: Q1 Financial Report - Action Required\r\n\
-Date: Sat, 7 Mar 2026 08:42:00 -0800\r\n\
-Content-Type: text/html; charset=utf-8\r\n\
-\r\n\
-<p>Hi team,</p>\r\n\
-<p>Attached is the updated <b>Q1 Financial Summary</b> for your review.</p>\r\n\
-<table border=\"1\" cellpadding=\"4\" style=\"border-collapse:collapse;margin:10px 0;width:100%\">\r\n\
-  <tr style=\"background:#326ea5;color:white\"><th>Category</th><th>Budget</th><th>Actual</th><th>Variance</th></tr>\r\n\
-  <tr><td>R&amp;D</td><td>$120,000</td><td>$114,200</td><td style=\"color:green\">-$5,800</td></tr>\r\n\
-  <tr><td>Infrastructure</td><td>$45,000</td><td>$48,100</td><td style=\"color:red\">+$3,100</td></tr>\r\n\
-  <tr><td>Marketing</td><td>$30,000</td><td>$27,500</td><td style=\"color:green\">-$2,500</td></tr>\r\n\
-</table>\r\n\
-<p>Please review lines 14-28 by end of day Friday.</p>\r\n\
-<p>Thanks,<br><b>Alan Strider</b><br>Finance Director</p>\r\n";
-
-const SEED_IN_3: &[u8] = b"From: GitHub Notifications <notifications@github.com>\r\n\
-To: you@example.com\r\n\
-Subject: [eudora-rs] Pull Request #142: Add Wazoo tabs\r\n\
-Date: Fri, 6 Mar 2026 14:15:00 -0800\r\n\
-Content-Type: text/html; charset=utf-8\r\n\
-\r\n\
-<p><b>@sdorner</b> requested your review on <a href=\"#\">#142 Add dockable Wazoo tabs</a></p>\r\n\
-<p>Features added:</p>\r\n\
-<ul>\r\n\
-  <li>Tab bar drag-to-dock</li>\r\n\
-  <li>Persisted tab layout to config</li>\r\n\
-  <li>Auto-placement algorithm</li>\r\n\
-</ul>\r\n\
-<p style=\"font-size:9pt;color:#666;\">\xE2\x80\x94<br>View it on GitHub or unsubscribe.</p>\r\n";
-
-const SEED_IN_4: &[u8] = b"From: Dana Park <dpark@example.com>\r\n\
-To: you@example.com\r\n\
-Cc: speakers@conf2026.example\r\n\
-Subject: Conference talk proposal accepted!\r\n\
-Date: Thu, 5 Mar 2026 11:20:00 -0800\r\n\
-Content-Type: text/html; charset=utf-8\r\n\
-\r\n\
-<p>Great news!</p>\r\n\
-<p>Our talk <b>\"Rendering HTML Email in 2026: Lessons from Eudora\"</b> was accepted for the main track!</p>\r\n\
-<p>Slot: <b>April 18, 2:00 PM \xE2\x80\x94 Hall B</b></p>\r\n\
-<p>Let's sync this week to outline the slides.</p>\r\n\
-<p>\xE2\x80\x94 Dana</p>\r\n";
-
-const SEED_IN_5: &[u8] = b"From: Rust Weekly <newsletter@rustweekly.example>\r\n\
-To: subscribers@rustweekly.example\r\n\
-Subject: This Week in Rust #642\r\n\
-Date: Wed, 4 Mar 2026 07:00:00 -0800\r\n\
-Content-Type: text/html; charset=utf-8\r\n\
-\r\n\
-<h3>This Week in Rust #642</h3>\r\n\
-<p>Hello and welcome to another issue of <i>This Week in Rust</i>!</p>\r\n\
-<ul>\r\n\
-  <li><b>Official:</b> Rust 1.86.0 release notes</li>\r\n\
-  <li><b>Project/Tooling:</b> Fast HTML/CSS layout engines in pure Rust</li>\r\n\
-  <li><b>Crate of the Week:</b> <code>webcore</code> \xE2\x80\x94 lightweight embeddable browser engine</li>\r\n\
-</ul>\r\n";
-
-const SEED_IN_6: &[u8] = b"From: Rick Langley <rick@example.com>\r\n\
-To: you@example.com\r\n\
-Subject: Lunch Friday?\r\n\
-Date: Mon, 2 Mar 2026 13:12:00 -0800\r\n\
-Content-Type: text/html; charset=utf-8\r\n\
-\r\n\
-<p>Hey, want to grab lunch Friday? Thinking that new ramen place on 5th.</p>\r\n\
-<p>Let me know!</p><p>Rick</p>\r\n";
-
-const SEED_IN_7: &[u8] = b"From: Bob Chen <bchen@example.com>\r\n\
-To: you@example.com\r\n\
-Subject: Production deployment checklist\r\n\
-Date: Wed, 4 Mar 2026 17:10:00 -0800\r\n\
-Content-Type: text/html; charset=utf-8\r\n\
-\r\n\
-<p>Hi,</p><p>All staging checks passed. Ready for the rollout window tonight at 19:00 UTC.</p><p>\xE2\x80\x94 Bob</p>\r\n";
-
-const SEED_OUT_1: &[u8] = b"From: you@example.com\r\n\
-To: Steve Dorner <sdorner@qualcomm.com>\r\n\
-Subject: Re: Welcome to Eudora 2026!\r\n\
-Date: Sat, 7 Mar 2026 10:45:00 -0800\r\n\
-Content-Type: text/html; charset=utf-8\r\n\
-\r\n\
-<p>Thanks Steve! The new version is amazing.</p>\r\n\
-<p>Quick questions:</p>\r\n\
-<ol>\r\n\
-  <li>Can I import old mailboxes?</li>\r\n\
-  <li>CalDAV support?</li>\r\n\
-</ol>\r\n";
-
-const SEED_OUT_2: &[u8] = b"From: you@example.com\r\n\
-To: team@example.com\r\n\
-Cc: astrider@example.com\r\n\
-Subject: Dashboard redesign - timeline update\r\n\
-Date: Fri, 6 Mar 2026 15:00:00 -0800\r\n\
-Content-Type: text/html; charset=utf-8\r\n\
-\r\n\
-<p>Hi team,</p>\r\n\
-<p>Running behind on the dashboard redesign. Pushing milestone to next Friday.</p>\r\n";
-
-const SEED_OUT_3: &[u8] = b"From: you@example.com\r\n\
-To: Dana Park <dpark@example.com>\r\n\
-Subject: Re: Conference talk proposal\r\n\
-Date: Thu, 5 Mar 2026 14:15:00 -0800\r\n\
-Content-Type: text/html; charset=utf-8\r\n\
-\r\n\
-<p>Fantastic news, Dana!</p>\r\n\
-<p>Outline ideas:</p>\r\n\
-<ol>\r\n\
-  <li>History of desktop email clients</li>\r\n\
-  <li>Modern rendering challenges</li>\r\n\
-  <li>Live demo</li>\r\n\
-</ol>\r\n";
-
-const SEED_DRAFTS_1: &[u8] = b"From: you@example.com\r\n\
-To: jbeckley@qualcomm.com\r\n\
-Subject: [Draft] Toolbar icon measurements\r\n\
-Date: Sat, 7 Mar 2026 11:00:00 -0800\r\n\
-Content-Type: text/html; charset=utf-8\r\n\
-\r\n\
-<p>Hi Jeff,</p><p>Here are the updated measurements for the Wazoo sidebar and toolbar buttons.</p>\r\n";
-
-const SEED_TRASH_1: &[u8] = b"From: Prize Desk <winner@lottery-example.org>\r\n\
-To: you@example.com\r\n\
-Subject: CONGRATULATIONS! You won a free cruise!\r\n\
-Date: Tue, 3 Mar 2026 03:11:00 -0800\r\n\
-Content-Type: text/html; charset=utf-8\r\n\
-\r\n\
-<p><b>Filtered by Eudora Spam Keywords Rule.</b></p><p>Click here immediately to claim your luxury Bahamas cruise reward.</p>\r\n";
-
-fn default_seed_filters() -> Vec<MailFilter> {
-    vec![
-        MailFilter {
-            name: "Mailing Lists".to_string(),
-            incoming: true,
-            outgoing: false,
-            manual: false,
-            header1: "To:".to_string(),
-            verb1: "contains".to_string(),
-            value1: "@list.example".to_string(),
-            conjunction: "ignore".to_string(),
-            header2: "Subject:".to_string(),
-            verb2: "contains".to_string(),
-            value2: String::new(),
-            action1_type: "Transfer".to_string(),
-            action1_value: "In".to_string(),
-            action2_type: "None".to_string(),
-            action2_value: String::new(),
-            enabled: true,
-        },
-        MailFilter {
-            name: "Newsletters".to_string(),
-            incoming: true,
-            outgoing: false,
-            manual: false,
-            header1: "From:".to_string(),
-            verb1: "contains".to_string(),
-            value1: "newsletter".to_string(),
-            conjunction: "ignore".to_string(),
-            header2: "Subject:".to_string(),
-            verb2: "contains".to_string(),
-            value2: String::new(),
-            action1_type: "Transfer".to_string(),
-            action1_value: "In".to_string(),
-            action2_type: "None".to_string(),
-            action2_value: String::new(),
-            enabled: true,
-        },
-        MailFilter {
-            name: "Spam Keywords".to_string(),
-            incoming: true,
-            outgoing: false,
-            manual: true,
-            header1: "Subject:".to_string(),
-            verb1: "contains".to_string(),
-            value1: "winner|lottery".to_string(),
-            conjunction: "ignore".to_string(),
-            header2: "Body:".to_string(),
-            verb2: "contains".to_string(),
-            value2: String::new(),
-            action1_type: "Junk".to_string(),
-            action1_value: "100".to_string(),
-            action2_type: "Stop".to_string(),
-            action2_value: String::new(),
-            enabled: true,
-        },
-        MailFilter {
-            name: "Work Priority".to_string(),
-            incoming: true,
-            outgoing: false,
-            manual: false,
-            header1: "From:".to_string(),
-            verb1: "contains".to_string(),
-            value1: "@qualcomm.com".to_string(),
-            conjunction: "ignore".to_string(),
-            header2: "Subject:".to_string(),
-            verb2: "contains".to_string(),
-            value2: String::new(),
-            action1_type: "Priority".to_string(),
-            action1_value: "1".to_string(),
-            action2_type: "Label".to_string(),
-            action2_value: "1".to_string(),
-            enabled: true,
-        },
-        MailFilter {
-            name: "Auto-Reply OOO".to_string(),
-            incoming: true,
-            outgoing: false,
-            manual: false,
-            header1: "Subject:".to_string(),
-            verb1: "is".to_string(),
-            value1: "Out of Office".to_string(),
-            conjunction: "ignore".to_string(),
-            header2: "From:".to_string(),
-            verb2: "contains".to_string(),
-            value2: String::new(),
-            action1_type: "Stop".to_string(),
-            action1_value: String::new(),
-            action2_type: "None".to_string(),
-            action2_value: String::new(),
-            enabled: true,
-        },
-    ]
 }
 
 fn save_contacts_to_disk(state: &AppState) {
@@ -732,140 +635,26 @@ fn save_filters_to_disk(state: &AppState) {
     let _ = std::fs::write(&filter_file, out);
 }
 
-fn seed_store_if_needed(data_dir: &Path) {
+fn ensure_standard_mailboxes(data_dir: &Path) {
     let mailboxes_dir = data_dir.join("mailboxes");
     let nick_dir = data_dir.join("Nicknames");
+    let sig_dir = data_dir.join("Signatures");
+    let stat_dir = data_dir.join("Stationery");
     let _ = std::fs::create_dir_all(&mailboxes_dir);
     let _ = std::fs::create_dir_all(&nick_dir);
+    let _ = std::fs::create_dir_all(&sig_dir);
+    let _ = std::fs::create_dir_all(&stat_dir);
 
-    let in_path = mailboxes_dir.join("In");
-    let needs_seed = !in_path.exists() || std::fs::metadata(&in_path).map(|m| m.len() == 0).unwrap_or(true);
-
-    if needs_seed {
-        // Seed In
-        if let Ok(mut in_toc) = macmbx::toc::Toc::open_or_create(&in_path) {
-            let _ = macmbx::ops::append_message(&mut in_toc, SEED_IN_1, "sdorner@qualcomm.com", macmbx::toc::State::Unread, 1);
-            let _ = macmbx::ops::set_flags(&mut in_toc, 0, macmbx::toc::MsgFlags::FLAGGED);
-            let _ = macmbx::ops::set_label(&mut in_toc, 0, 1);
-
-            let _ = macmbx::ops::append_message(&mut in_toc, SEED_IN_2, "astrider@example.com", macmbx::toc::State::Unread, 2);
-            let _ = macmbx::ops::set_label(&mut in_toc, 1, 4);
-
-            let _ = macmbx::ops::append_message(&mut in_toc, SEED_IN_3, "notifications@github.com", macmbx::toc::State::Read, 3);
-            let _ = macmbx::ops::set_label(&mut in_toc, 2, 5);
-
-            let _ = macmbx::ops::append_message(&mut in_toc, SEED_IN_4, "dpark@example.com", macmbx::toc::State::Read, 3);
-            let _ = macmbx::ops::set_flags(&mut in_toc, 3, macmbx::toc::MsgFlags::FLAGGED);
-            let _ = macmbx::ops::set_label(&mut in_toc, 3, 6);
-
-            let _ = macmbx::ops::append_message(&mut in_toc, SEED_IN_5, "newsletter@rustweekly.example", macmbx::toc::State::Read, 4);
-            let _ = macmbx::ops::set_label(&mut in_toc, 4, 5);
-
-            let _ = macmbx::ops::append_message(&mut in_toc, SEED_IN_6, "rick@example.com", macmbx::toc::State::Read, 5);
-            let _ = macmbx::ops::set_label(&mut in_toc, 5, 2);
-
-            let _ = macmbx::ops::append_message(&mut in_toc, SEED_IN_7, "bchen@example.com", macmbx::toc::State::Unread, 2);
-            let _ = macmbx::ops::set_label(&mut in_toc, 6, 1);
-
-            let _ = in_toc.save();
+    for mb in &["In", "Out", "Trash", "Junk", "Drafts", "Sent", "Archive"] {
+        let p = mailboxes_dir.join(mb);
+        if !p.exists() {
+            let _ = macmbx::toc::Toc::open_or_create(&p);
         }
-
-        // Seed Out
-        let out_path = mailboxes_dir.join("Out");
-        if let Ok(mut out_toc) = macmbx::toc::Toc::open_or_create(&out_path) {
-            let _ = macmbx::ops::append_message(&mut out_toc, SEED_OUT_1, "you@example.com", macmbx::toc::State::Sent, 3);
-            let _ = macmbx::ops::set_label(&mut out_toc, 0, 1);
-
-            let _ = macmbx::ops::append_message(&mut out_toc, SEED_OUT_2, "you@example.com", macmbx::toc::State::Sent, 3);
-            let _ = macmbx::ops::set_label(&mut out_toc, 1, 7);
-
-            let _ = macmbx::ops::append_message(&mut out_toc, SEED_OUT_3, "you@example.com", macmbx::toc::State::Queued, 3);
-            let _ = macmbx::ops::set_label(&mut out_toc, 2, 1);
-
-            let _ = out_toc.save();
-        }
-
-        // Seed Drafts
-        let drafts_path = mailboxes_dir.join("Drafts");
-        if let Ok(mut drafts_toc) = macmbx::toc::Toc::open_or_create(&drafts_path) {
-            let _ = macmbx::ops::append_message(&mut drafts_toc, SEED_DRAFTS_1, "you@example.com", macmbx::toc::State::Sendable, 3);
-            let _ = drafts_toc.save();
-        }
-
-        // Seed Trash
-        let trash_path = mailboxes_dir.join("Trash");
-        if let Ok(mut trash_toc) = macmbx::toc::Toc::open_or_create(&trash_path) {
-            let _ = macmbx::ops::append_message(&mut trash_toc, SEED_TRASH_1, "winner@lottery-example.org", macmbx::toc::State::Read, 4);
-            let _ = trash_toc.save();
-        }
-
-        for mb in &["Junk", "Sent", "Archive"] {
-            let p = mailboxes_dir.join(mb);
-            if !p.exists() {
-                let _ = macmbx::toc::Toc::open_or_create(&p);
-            }
-        }
-
-        let work_dir = mailboxes_dir.join("Work");
-        if work_dir.is_file() {
-            let _ = std::fs::remove_file(&work_dir);
-            let _ = std::fs::remove_file(mailboxes_dir.join("Work.toc"));
-        }
-        let _ = std::fs::create_dir_all(&work_dir);
-        let _ = macmbx::toc::Toc::open_or_create(&work_dir.join("Projects"));
-        let _ = macmbx::toc::Toc::open_or_create(&work_dir.join("Notes"));
-
-        let personal_dir = mailboxes_dir.join("Personal");
-        if personal_dir.is_file() {
-            let _ = std::fs::remove_file(&personal_dir);
-            let _ = std::fs::remove_file(mailboxes_dir.join("Personal.toc"));
-        }
-        let _ = std::fs::create_dir_all(&personal_dir);
-        let _ = macmbx::toc::Toc::open_or_create(&personal_dir.join("Family"));
-        let _ = macmbx::toc::Toc::open_or_create(&personal_dir.join("Receipts"));
-    }
-
-    let has_any_nick_file = if nick_dir.exists() {
-        std::fs::read_dir(&nick_dir)
-            .map(|mut it| it.any(|e| e.map(|entry| entry.path().is_file()).unwrap_or(false)))
-            .unwrap_or(false)
-    } else {
-        false
-    };
-
-    if !has_any_nick_file {
-        let standard_nicks = nick_dir.join("Standard.txt");
-        let content = "\
-alias \"Steve Dorner\" sdorner@qualcomm.com\n\
-note \"Steve Dorner\" <phone:(858) 555-0100><company:Qualcomm><title:Chief Architect><note:Creator of Eudora. Prefers plain text.>\n\
-alias \"Jeff Beckley\" jbeckley@qualcomm.com\n\
-note \"Jeff Beckley\" <phone:(858) 555-0101><company:Qualcomm><title:Senior Engineer><note:Toolbar and UI specialist.>\n\
-alias \"Alan Strider\" astrider@example.com\n\
-note \"Alan Strider\" <phone:(415) 555-0200><company:Acme Corp><title:Finance Director><note:Sends quarterly reports.>\n\
-alias \"Dana Park\" dpark@example.com\n\
-note \"Dana Park\" <phone:(415) 555-0201><company:TechStudio><title:Design Lead><note:Conference co-speaker.>\n\
-alias \"Rick Langley\" rick@example.com\n\
-note \"Rick Langley\" <phone:(510) 555-0300><note:College friend. Likes ramen.>\n\
-alias \"Lisa Warren\" lwarren@design.example\n\
-note \"Lisa Warren\" <phone:(510) 555-0301><company:DesignWorks><title:UX Researcher><note:Working on mobile nav project.>\n\
-alias \"Bob Chen\" bchen@example.com\n\
-note \"Bob Chen\" <phone:(650) 555-0400><company:CloudSoft><title:DevOps Manager><note:Handles infrastructure.>\n\
-alias \"Maria Santos\" msantos@example.com\n\
-note \"Maria Santos\" <phone:(650) 555-0401><company:DataFlow><title:Data Scientist><note:ML and analytics expert.>\n";
-        let _ = std::fs::write(&standard_nicks, content);
     }
 
     let ini_path = data_dir.join("geudora.ini");
     if !ini_path.exists() {
-        let ini_content = "\
-[Settings]
-LoginName=you
-RealName=You
-ReturnAddress=you@example.com
-MailServer=mail.example.com
-SMTPServer=smtp.example.com
-POPAccount=you@example.com
-";
+        let ini_content = "# Eudora configuration\n";
         let _ = std::fs::write(&ini_path, ini_content);
     }
 }
@@ -909,8 +698,9 @@ fn collect_store_mailboxes(
 
 fn load_macmbx_data(
     data_dir: &Path,
-    _conf: &macmbx::conf::Conf,
+    conf: &macmbx::conf::Conf,
 ) -> (macmbx::store::Store, Vec<Mailbox>, Vec<MailMessage>, Vec<Contact>, Vec<MailFilter>) {
+    let label_defs = load_labels_from_conf(conf);
     let mailboxes_dir = data_dir.join("mailboxes");
     let store = macmbx::store::Store::open(&mailboxes_dir)
         .unwrap_or_else(|_| macmbx::store::Store::open(data_dir).unwrap());
@@ -1013,15 +803,10 @@ fn load_macmbx_data(
 
                 let mut labels = Vec::new();
                 let lbl_idx = macmbx::ops::get_label(&toc, i);
-                match lbl_idx {
-                    1 => labels.push("Work"),
-                    2 => labels.push("Personal"),
-                    3 => labels.push("Urgent"),
-                    4 => labels.push("Finance"),
-                    5 => labels.push("Dev"),
-                    6 => labels.push("Design"),
-                    7 => labels.push("Team"),
-                    _ => {}
+                if (1..=7).contains(&lbl_idx) {
+                    if let Some(def) = label_defs.get(lbl_idx - 1) {
+                        labels.push(def.name.clone());
+                    }
                 }
 
                 let avatar_initials = compute_initials(&from);
@@ -1195,9 +980,6 @@ fn load_macmbx_data(
             });
         }
     }
-    if filters.is_empty() {
-        filters = default_seed_filters();
-    }
 
     (store, mailboxes, messages, contacts, filters)
 }
@@ -1206,27 +988,22 @@ impl AppState {
     fn new() -> Self {
         let data_dir = resolve_data_dir();
         seed_store_if_needed(&data_dir);
-        let mut conf = macmbx::conf::Conf::load(data_dir.join("geudora.ini"))
+        let conf = macmbx::conf::Conf::load(data_dir.join("geudora.ini"))
             .unwrap_or_else(|_| macmbx::conf::Conf::new());
 
-        if conf.count_accounts() == 0 {
-            let work_acct = macmbx::conf::Account {
-                index: 1,
-                name: "Work".to_string(),
-                real_name: "Steve Dorner (Work)".to_string(),
-                email: "steve@qualcomm.com".to_string(),
-                account_type: "IMAP".to_string(),
-                server: "imap.qualcomm.com".to_string(),
-                smtp_server: "smtp.qualcomm.com".to_string(),
-                username: "sdorner".to_string(),
-                check_interval: 10,
-                ssl_mode: 2,
-                leave_on_server: true,
-                enabled: true,
-            };
-            conf.add_account(&work_acct);
-            let _ = conf.save_as(data_dir.join("geudora.ini"));
-        }
+        let has_primary = {
+            let email = conf.get("sending_mail", "email_address")
+                .or_else(|| conf.get("Settings", "ReturnAddress"))
+                .unwrap_or_default();
+            let server = conf.get("checking_mail", "pop_server")
+                .or_else(|| conf.get("Settings", "MailServer"))
+                .unwrap_or_default();
+            let real_accounts = conf.get_all_accounts();
+            let has_custom_account = real_accounts.iter().any(|a| {
+                !a.email.is_empty() && a.email != "steve@qualcomm.com" && a.email != "you@example.com"
+            });
+            has_custom_account || (!email.is_empty() && !server.is_empty() && email != "you@example.com" && email != "steve@qualcomm.com" && server != "mail.example.com")
+        };
 
         let (store, mailboxes, messages, contacts, filters) = load_macmbx_data(&data_dir, &conf);
 
@@ -1677,22 +1454,45 @@ impl AppState {
         let today_ymd = cur_y * 10000 + cur_m * 100 + cur_d;
 
         let cal_store = macmbx::calendar::CalendarStore::new(&data_dir);
-        seed_sample_calendar_events(&cal_store, today_ymd);
+        cleanup_sample_calendar_events(&cal_store);
 
-        let status_tasks = vec![
-            StatusTask { id: 1, icon: "📥".to_string(), title: "Mail Check Engine".to_string(), status: "Idle — Last checked just now".to_string(), progress: 1.0 },
-            StatusTask { id: 2, icon: "📅".to_string(), title: "CalDAV Calendar Sync".to_string(), status: "Synced — local & remote up to date".to_string(), progress: 1.0 },
-            StatusTask { id: 3, icon: "📤".to_string(), title: "Outbox Delivery Queue".to_string(), status: "Ready — 0 messages pending".to_string(), progress: 1.0 },
-            StatusTask { id: 4, icon: "⚡".to_string(), title: "Storage Engine".to_string(), status: "Online — phoenix.db OK".to_string(), progress: 1.0 },
-        ];
+        let now_clock = current_clock_str();
+        let mut status_logs = Vec::new();
+        status_logs.push(StatusLog {
+            time: now_clock.clone(),
+            message: format!("Storage initialized: {} mailboxes, {} messages loaded", mailboxes.len(), messages.len()),
+        });
+        let init_mail = conf.get("sending_mail", "email_address")
+            .or_else(|| conf.get("Settings", "ReturnAddress"))
+            .unwrap_or_default();
+        let init_srv = conf.get("checking_mail", "pop_server")
+            .or_else(|| conf.get("Settings", "MailServer"))
+            .unwrap_or_default();
+        if !init_mail.is_empty() && init_mail != "you@example.com" {
+            status_logs.push(StatusLog {
+                time: now_clock,
+                message: format!("Account loaded: {} ({})", init_mail, init_srv),
+            });
+        } else {
+            status_logs.push(StatusLog {
+                time: now_clock,
+                message: "Ready — No primary account configured".to_string(),
+            });
+        }
 
-        let status_logs = vec![
-            StatusLog { time: "10:00:00".to_string(), message: "Initialized Macmbx storage engine".to_string() },
-            StatusLog { time: "10:00:01".to_string(), message: "Connected to mailserver (SSL/TLS)".to_string() },
-            StatusLog { time: "10:00:02".to_string(), message: format!("Mailbox check complete: In ({} unread)", in_unread) },
-            StatusLog { time: "10:00:03".to_string(), message: "Calendar store ready (phoenix.db)".to_string() },
-            StatusLog { time: "10:00:05".to_string(), message: "All background tasks completed successfully.".to_string() },
-        ];
+        let is_imap = conf.get_bool("checking_mail", "use_imap", false);
+        let init_proto = if init_srv.is_empty() || init_srv == "mail.example.com" {
+            "No Account".to_string()
+        } else if is_imap {
+            "IMAP Idle".to_string()
+        } else {
+            "POP3 Ready".to_string()
+        };
+        let init_right = if init_srv.is_empty() || init_srv == "mail.example.com" {
+            "Not Connected".to_string()
+        } else {
+            format!("Server: {}", init_srv)
+        };
 
         Self {
             skin: Skin::Eudora,
@@ -1722,8 +1522,8 @@ impl AppState {
             settings_status: "Ready — All 21 classic Eudora configuration panels loaded.".to_string(),
             selected_account_idx: 0,
             status_left: format!("Welcome — {} messages, {} unread", in_total, in_unread),
-            status_center: "IMAP Idle".to_string(),
-            status_right: "Connected to mail.example.com".to_string(),
+            status_center: init_proto,
+            status_right: init_right,
             store,
             expanded_folders,
             ctx_menu_open: false,
@@ -1748,8 +1548,9 @@ impl AppState {
             cal_modal_open: false,
             cal_is_new_event: true,
             cal_editing_uid: String::new(),
-            status_tasks,
             status_logs,
+            wizard: WizardState::new_dominant(),
+            wizard_modal_open: !has_primary,
         }
     }
 
@@ -1987,26 +1788,54 @@ impl AppState {
     }
 
     fn update_status_bar(&mut self) {
+        let mail_srv = self.conf.get("checking_mail", "pop_server")
+            .or_else(|| self.conf.get("Settings", "MailServer"))
+            .unwrap_or_default();
+        let is_imap = self.conf.get_bool("checking_mail", "use_imap", false);
+        let proto_status = if mail_srv.is_empty() || mail_srv == "mail.example.com" {
+            "No Account".to_string()
+        } else if is_imap {
+            "IMAP Idle".to_string()
+        } else {
+            "POP3 Ready".to_string()
+        };
+        let srv_label = if mail_srv.is_empty() || mail_srv == "mail.example.com" {
+            "Not Connected".to_string()
+        } else {
+            format!("Server: {}", mail_srv)
+        };
+
         match self.active_tab() {
             TabKind::Welcome => {
                 let total = self.messages.len();
                 let unread = self.messages.iter().filter(|m| m.unread).count();
                 self.status_left = format!("Welcome — {} total messages, {} unread", total, unread);
-                self.status_center = "IMAP / POP3 Idle".to_string();
-                self.status_right = "Connected to mail.example.com".to_string();
+                self.status_center = proto_status;
+                self.status_right = srv_label;
             }
             TabKind::Mailbox(ref mb) if mb == "Out" => {
                 let total = self.visible_messages_for_mailbox("Out").len();
+                let smtp_srv = self.conf.get("sending_mail", "smtp_server")
+                    .or_else(|| self.conf.get("Settings", "SMTPServer"))
+                    .unwrap_or_default();
                 self.status_left = format!("Out — {} messages", total);
-                self.status_center = "SMTP Ready".to_string();
-                self.status_right = "Connected to mail.example.com".to_string();
+                self.status_center = if smtp_srv.is_empty() || smtp_srv == "smtp.example.com" {
+                    "No SMTP Server".to_string()
+                } else {
+                    "SMTP Ready".to_string()
+                };
+                self.status_right = if smtp_srv.is_empty() || smtp_srv == "smtp.example.com" {
+                    "Not Connected".to_string()
+                } else {
+                    format!("Server: {}", smtp_srv)
+                };
             }
             TabKind::Mailbox(ref mb) => {
                 let total = self.visible_messages_for_mailbox(mb).len();
                 let unread = self.unread_count(mb);
                 self.status_left = format!("{} — {} messages, {} unread", mb, total, unread);
-                self.status_center = "IMAP Idle".to_string();
-                self.status_right = "Connected to mail.example.com".to_string();
+                self.status_center = proto_status;
+                self.status_right = srv_label;
             }
             TabKind::Contacts => {
                 self.status_left = format!("Contacts — {} people", self.contacts.len());
@@ -2029,11 +1858,125 @@ impl AppState {
                 let m = (self.cal_selected_date / 100) % 100;
                 let d = self.cal_selected_date % 100;
                 let ev_count = self.cal_store.get_events_for_date(self.cal_selected_date).len();
+                let has_caldav = self.cal_store.get_calendars().iter().any(|c| c.source == macmbx::calendar::CalSourceType::CalDAV);
                 self.status_left = format!("Calendar — {} events on {}-{:02}-{:02} ({})", ev_count, y, m, d, self.cal_view_mode);
-                self.status_center = "CalDAV Ready".to_string();
+                self.status_center = if has_caldav { "CalDAV Synced".to_string() } else { "Local Calendar".to_string() };
                 self.status_right = "phoenix.db".to_string();
             }
         }
+    }
+
+    fn compute_status_tasks(&self) -> Vec<StatusTask> {
+        let mut tasks = Vec::new();
+
+        // 1. Mail Engine
+        let mail_srv = self.conf.get("checking_mail", "pop_server")
+            .or_else(|| self.conf.get("Settings", "MailServer"))
+            .unwrap_or_default();
+        let username = self.conf.get("checking_mail", "pop_username")
+            .or_else(|| self.conf.get("Settings", "LoginName"))
+            .unwrap_or_default();
+        let is_imap = self.conf.get_bool("checking_mail", "use_imap", false);
+        let proto = if is_imap { "IMAP" } else { "POP3" };
+
+        if mail_srv.is_empty() || mail_srv == "mail.example.com" {
+            tasks.push(StatusTask {
+                id: 1,
+                icon: "📥".to_string(),
+                title: "Mail Engine".to_string(),
+                status: "Offline — No account configured".to_string(),
+                progress: 0.0,
+            });
+        } else {
+            tasks.push(StatusTask {
+                id: 1,
+                icon: "📥".to_string(),
+                title: format!("Mail Engine ({})", proto),
+                status: format!("Ready — {} ({})", username, mail_srv),
+                progress: 1.0,
+            });
+        }
+
+        // 2. Outbox Delivery Queue
+        let out_path = self.data_dir.join("mailboxes").join("Out");
+        let queued_count = if let Ok(toc) = macmbx::toc::Toc::open_or_create(&out_path) {
+            toc.msgs.iter().filter(|m| m.state == macmbx::toc::State::Queued).count()
+        } else {
+            0
+        };
+        let smtp_srv = self.conf.get("sending_mail", "smtp_server")
+            .or_else(|| self.conf.get("Settings", "SMTPServer"))
+            .unwrap_or_default();
+
+        if queued_count > 0 {
+            tasks.push(StatusTask {
+                id: 2,
+                icon: "📤".to_string(),
+                title: "Outbox Delivery Queue".to_string(),
+                status: format!("{} message(s) queued for delivery", queued_count),
+                progress: 0.5,
+            });
+        } else if smtp_srv.is_empty() || smtp_srv == "smtp.example.com" {
+            tasks.push(StatusTask {
+                id: 2,
+                icon: "📤".to_string(),
+                title: "Outbox Delivery Queue".to_string(),
+                status: "Idle — 0 queued (SMTP not configured)".to_string(),
+                progress: 1.0,
+            });
+        } else {
+            tasks.push(StatusTask {
+                id: 2,
+                icon: "📤".to_string(),
+                title: "Outbox Delivery Queue".to_string(),
+                status: format!("Idle — 0 queued (via {})", smtp_srv),
+                progress: 1.0,
+            });
+        }
+
+        // 3. Storage Engine
+        let mb_count = self.mailboxes.len();
+        let msg_count = self.messages.len();
+        tasks.push(StatusTask {
+            id: 3,
+            icon: "⚡".to_string(),
+            title: "Storage Engine".to_string(),
+            status: format!("Online — {} mailboxes, {} messages", mb_count, msg_count),
+            progress: 1.0,
+        });
+
+        // 4. Calendar Engine / CalDAV Sync
+        let cals = self.cal_store.get_calendars();
+        let caldav_cals: Vec<_> = cals.iter().filter(|c| c.source == macmbx::calendar::CalSourceType::CalDAV).collect();
+        if !caldav_cals.is_empty() {
+            for (idx, cal) in caldav_cals.iter().enumerate() {
+                let status_str = if cal.last_sync_time > 0 {
+                    let (y, m, d, hh, mm) = macmbx::calendar::split_ts(cal.last_sync_time);
+                    format!("Synced {}-{:02}-{:02} {:02}:{:02}", y, m, d, hh, mm)
+                } else if !cal.server_url.is_empty() {
+                    format!("Ready — {}", cal.server_url)
+                } else {
+                    "Not configured".to_string()
+                };
+                tasks.push(StatusTask {
+                    id: 4 + idx as i32,
+                    icon: "📅".to_string(),
+                    title: format!("CalDAV ({})", cal.name),
+                    status: status_str,
+                    progress: if cal.last_sync_time > 0 { 1.0 } else { 0.0 },
+                });
+            }
+        } else {
+            tasks.push(StatusTask {
+                id: 4,
+                icon: "📅".to_string(),
+                title: "Calendar Engine".to_string(),
+                status: "Local storage — CalDAV not configured".to_string(),
+                progress: 1.0,
+            });
+        }
+
+        tasks
     }
 }
 
@@ -2605,6 +2548,7 @@ fn render_eudora_all(doc: &mut Document, state: &mut AppState) {
     render_eudora_compose(doc, state);
     render_eudora_calendar(doc, state);
     render_eudora_cal_modal(doc, state);
+    render_eudora_wizard_modal(doc, state);
     render_eudora_context_menu(doc, state);
     render_eudora_statusbar(doc, state);
 }
@@ -2789,74 +2733,8 @@ fn current_clock_str() -> String {
     format!("{:02}:{:02}:{:02}", h, min, sec)
 }
 
-fn seed_sample_calendar_events(store: &macmbx::calendar::CalendarStore, today_ymd: i32) {
-    let events = store.get_events_for_date(today_ymd);
-    if !events.is_empty() {
-        return;
-    }
-    let (y, m, d) = (today_ymd / 10000, (today_ymd / 100) % 100, today_ymd % 100);
-
-    let ts1 = macmbx::calendar::make_local_ts(y, m, d, 10, 0);
-    let mut ev1 = macmbx::calendar::CalendarEvent::default();
-    ev1.uid = format!("seed-1-{}", today_ymd);
-    ev1.summary = "Eudora 2026 Team Standup".to_string();
-    ev1.location = "Engineering Room 4".to_string();
-    ev1.description = "Weekly sprint sync on Rust and WebCore developments.".to_string();
-    ev1.dt_start_ts = ts1;
-    ev1.dt_end_ts = ts1 + 3600;
-    ev1.start_day = today_ymd;
-    ev1.end_day = today_ymd;
-    ev1.color = "#326ea5".to_string();
-    ev1.reminder_mins = 15;
-    store.add_event(&ev1);
-
-    let ts2 = macmbx::calendar::make_local_ts(y, m, d, 14, 0);
-    let mut ev2 = macmbx::calendar::CalendarEvent::default();
-    ev2.uid = format!("seed-2-{}", today_ymd);
-    ev2.summary = "Design Review: HTML Calendar & Status".to_string();
-    ev2.location = "Conference Room B".to_string();
-    ev2.description = "Review UI components, mini-calendar, and agenda views.".to_string();
-    ev2.dt_start_ts = ts2;
-    ev2.dt_end_ts = ts2 + 5400;
-    ev2.start_day = today_ymd;
-    ev2.end_day = today_ymd;
-    ev2.color = "#2ea043".to_string();
-    ev2.reminder_mins = 15;
-    store.add_event(&ev2);
-
-    let tomorrow_ts = ts1 + 86400;
-    let (ty, tm, td, _, _) = macmbx::calendar::split_ts(tomorrow_ts);
-    let tomorrow_ymd = ty * 10000 + tm * 100 + td;
-    let ts3 = macmbx::calendar::make_local_ts(ty, tm, td, 11, 30);
-    let mut ev3 = macmbx::calendar::CalendarEvent::default();
-    ev3.uid = format!("seed-3-{}", tomorrow_ymd);
-    ev3.summary = "CalDAV & Mail Server Sync Test".to_string();
-    ev3.location = "QA Lab".to_string();
-    ev3.description = "Verify background sync and reminder notifications.".to_string();
-    ev3.dt_start_ts = ts3;
-    ev3.dt_end_ts = ts3 + 3600;
-    ev3.start_day = tomorrow_ymd;
-    ev3.end_day = tomorrow_ymd;
-    ev3.color = "#9b32a5".to_string();
-    ev3.reminder_mins = 30;
-    store.add_event(&ev3);
-
-    let dat_ts = ts1 + 172800;
-    let (dy, dm, dd, _, _) = macmbx::calendar::split_ts(dat_ts);
-    let dat_ymd = dy * 10000 + dm * 100 + dd;
-    let ts4 = macmbx::calendar::make_local_ts(dy, dm, dd, 9, 0);
-    let mut ev4 = macmbx::calendar::CalendarEvent::default();
-    ev4.uid = format!("seed-4-{}", dat_ymd);
-    ev4.summary = "Phoenix 1.0 Milestone Release".to_string();
-    ev4.location = "Online / Staging".to_string();
-    ev4.description = "All-day milestone target for internal test deployment.".to_string();
-    ev4.dt_start_ts = ts4;
-    ev4.dt_end_ts = ts4 + 28800;
-    ev4.start_day = dat_ymd;
-    ev4.end_day = dat_ymd;
-    ev4.all_day = true;
-    ev4.color = "#d29922".to_string();
-    store.add_event(&ev4);
+fn cleanup_sample_calendar_events(store: &macmbx::calendar::CalendarStore) {
+    store.delete_events_matching_prefix("seed-");
 }
 
 fn render_eudora_wazoo(doc: &mut Document, state: &AppState) {
@@ -3006,7 +2884,8 @@ fn render_eudora_wazoo(doc: &mut Document, state: &AppState) {
         }
         WazooTab::Status => {
             html.push_str(r#"<div class="sidebar-status"><div class="status-sec-hdr">Active Tasks &amp; Sync</div>"#);
-            for task in &state.status_tasks {
+            let tasks = state.compute_status_tasks();
+            for task in &tasks {
                 let pct = (task.progress * 100.0).clamp(0.0, 100.0);
                 html.push_str(&format!(
                     r#"<div class="status-task-card">
@@ -3518,6 +3397,366 @@ fn render_eudora_cal_modal(doc: &mut Document, state: &AppState) {
         }
         if let Some(el) = doc.get_element_by_id("cal-btn-delete") {
             doc.set_style_property(el, "display", "inline-block");
+        }
+    }
+}
+
+fn render_eudora_wizard_modal(doc: &mut Document, state: &mut AppState) {
+    let Some(modal_el) = doc.get_element_by_id("account-wizard-modal") else {
+        return;
+    };
+
+    if !state.wizard_modal_open {
+        doc.set_style_property(modal_el, "display", "none");
+        return;
+    }
+
+    doc.set_style_property(modal_el, "display", "flex");
+
+    // Ensure the wizard image has the base64 data URL and is synchronously decoded
+    if let Some(img_el) = doc.get_element_by_id("wiz-sidebar-img") {
+        doc.set_attribute(img_el, "src", &WIZ_WELCOME_DATA_URL);
+        if let Some(node) = doc.find_webcore_mut(img_el) {
+            if node.image_data.is_none() {
+                if let Some(decoded) = webcore::images::load_decoded_image_from_src(&WIZ_WELCOME_DATA_URL, "") {
+                    webcore::images::set_decoded_image_on_node(node, decoded);
+                }
+            }
+        }
+    }
+
+    let is_dom = state.wizard.is_dominant;
+    let cur_step = state.wizard.step;
+
+    // Show/hide personality step tab
+    if let Some(el) = doc.get_element_by_id("wiz-sum-row-pers") {
+        doc.set_style_property(el, "display", if is_dom { "none" } else { "flex" });
+    }
+
+    // Update Wizard Header Band with active step title, description, and step progress pill
+    let (active_title, active_desc, active_pill, active_icon) = match (state.wizard.flow, cur_step) {
+        (_, 0) => (
+            "Welcome to Phoenix",
+            "Account Setup Wizard",
+            "Intro",
+            "📬",
+        ),
+        (_, 1) => (
+            "Account Settings",
+            "Choose your preferred configuration method",
+            "Step 1",
+            "⚙️",
+        ),
+        (WizardFlow::Detect, 9) => (
+            "Select Email Provider",
+            "Choose your service for automatic server configuration",
+            "Step 2 of 4",
+            "🔍",
+        ),
+        (WizardFlow::Detect, 10) => (
+            match state.wizard.provider.as_str() {
+                "gmail" => "Google / Gmail Credentials",
+                "outlook" => "Outlook / Hotmail Credentials",
+                "yahoo" => "Yahoo! Mail Credentials",
+                _ => "Account Credentials",
+            },
+            "Enter your email address, login name, and password",
+            "Step 3 of 4",
+            "🔑",
+        ),
+        (WizardFlow::Advanced, 6) => (
+            "Incoming Mail Server",
+            "Specify server hostname, port, protocol, and SSL/TLS",
+            "Step 2 of 4",
+            "📥",
+        ),
+        (WizardFlow::Advanced, 7) => (
+            "Outgoing Mail Server",
+            "Specify SMTP hostname, port, and authentication",
+            "Step 3 of 4",
+            "📤",
+        ),
+        (WizardFlow::Import, 11) => (
+            "Import Settings",
+            "Scan system for existing mail client profiles",
+            "Step 2 of 3",
+            "📦",
+        ),
+        (_, 2) => (
+            "Personality Name",
+            "Assign a unique name to identify this email persona",
+            if is_dom { "Step 2 of 6" } else { "Step 2 of 7" },
+            "🏷️",
+        ),
+        (_, 3) => (
+            "Personal Information",
+            "Enter your display name as it appears in outgoing mail",
+            if is_dom { "Step 2 of 6" } else { "Step 3 of 7" },
+            "👤",
+        ),
+        (_, 4) => (
+            "Email Address",
+            "Enter your return email address",
+            if is_dom { "Step 3 of 6" } else { "Step 4 of 7" },
+            "✉️",
+        ),
+        (_, 5) => (
+            "User Name",
+            "Enter your mail server login username",
+            if is_dom { "Step 4 of 6" } else { "Step 5 of 7" },
+            "🔑",
+        ),
+        (_, 6) => (
+            "Incoming Mail Server",
+            "Specify incoming server hostname, port, and protocol",
+            if is_dom { "Step 5 of 6" } else { "Step 6 of 7" },
+            "📥",
+        ),
+        (_, 7) => (
+            "Outgoing Mail Server",
+            "Specify outgoing SMTP server and authentication settings",
+            if is_dom { "Step 6 of 6" } else { "Step 7 of 7" },
+            "📤",
+        ),
+        (_, 8) => (
+            "Ready to Connect",
+            "Review your account summary and finish setup",
+            "Complete",
+            "✅",
+        ),
+        _ => (
+            "Account Setup Wizard",
+            "Configure your email account",
+            "Setup",
+            "📧",
+        ),
+    };
+    set_text_by_id(doc, "wiz-active-title", active_title);
+    set_text_by_id(doc, "wiz-active-desc", active_desc);
+    set_text_by_id(doc, "wiz-active-pill", active_pill);
+    set_text_by_id(doc, "wiz-header-icon", active_icon);
+
+    // Update active step pane
+    for i in 0..=11 {
+        if let Some(pane_el) = doc.get_element_by_id(&format!("wiz-step-{}", i)) {
+            if i == cur_step {
+                doc.class_list_add(pane_el, "active");
+            } else {
+                doc.class_list_remove(pane_el, "active");
+            }
+        }
+    }
+
+    // Step 1: Account setup choice cards and radio sync
+    for (val, radio_id, card_id) in [
+        (0, "wiz-radio-new", "wiz-card-choice-0"),
+        (2, "wiz-radio-detect", "wiz-card-choice-2"),
+        (3, "wiz-radio-skip", "wiz-card-choice-3"),
+        (1, "wiz-radio-import", "wiz-card-choice-1"),
+    ] {
+        let is_selected = state.wizard.account_choice == val;
+        if let Some(el) = doc.get_element_by_id(radio_id) {
+            if is_selected {
+                doc.set_attribute(el, "checked", "checked");
+            } else {
+                doc.remove_attribute(el, "checked");
+            }
+        }
+        if let Some(card_el) = doc.get_element_by_id(card_id) {
+            if is_selected {
+                doc.class_list_add(card_el, "selected");
+            } else {
+                doc.class_list_remove(card_el, "selected");
+            }
+        }
+    }
+
+    // Step 9: Provider choice cards and radio sync
+    for (p, radio_id, card_id) in [
+        ("gmail", "wiz-prov-gmail", "wiz-card-prov-gmail"),
+        ("outlook", "wiz-prov-outlook", "wiz-card-prov-outlook"),
+        ("yahoo", "wiz-prov-yahoo", "wiz-card-prov-yahoo"),
+        ("other", "wiz-prov-other", "wiz-card-prov-other"),
+    ] {
+        let is_selected = state.wizard.provider == p;
+        if let Some(el) = doc.get_element_by_id(radio_id) {
+            if is_selected {
+                doc.set_attribute(el, "checked", "checked");
+            } else {
+                doc.remove_attribute(el, "checked");
+            }
+        }
+        if let Some(card_el) = doc.get_element_by_id(card_id) {
+            if is_selected {
+                doc.class_list_add(card_el, "selected");
+            } else {
+                doc.class_list_remove(card_el, "selected");
+            }
+        }
+    }
+
+    let sync_input = |doc: &mut Document, id: &str, val: &str| {
+        if let Some(el) = doc.get_element_by_id(id) {
+            if !val.is_empty() {
+                doc.set_attribute(el, "value", val);
+                doc.set_value(el, val);
+            }
+        }
+    };
+
+    // Step 10: Credentials sync
+    sync_input(doc, "wiz-cred-email", &state.wizard.return_address);
+    sync_input(doc, "wiz-cred-password", &state.wizard.password);
+    sync_input(doc, "wiz-cred-name", &state.wizard.real_name);
+    if state.wizard.incoming_protocol.eq_ignore_ascii_case("IMAP") {
+        if let Some(el) = doc.get_element_by_id("wiz-cred-proto-imap") {
+            doc.set_attribute(el, "checked", "checked");
+        }
+        if let Some(el) = doc.get_element_by_id("wiz-cred-proto-pop") {
+            doc.remove_attribute(el, "checked");
+        }
+    } else {
+        if let Some(el) = doc.get_element_by_id("wiz-cred-proto-pop") {
+            doc.set_attribute(el, "checked", "checked");
+        }
+        if let Some(el) = doc.get_element_by_id("wiz-cred-proto-imap") {
+            doc.remove_attribute(el, "checked");
+        }
+    }
+    let (cred_title, cred_desc) = match state.wizard.provider.as_str() {
+        "gmail" => ("Google / Gmail Credentials", "Enter your Google email address and an App Password:"),
+        "outlook" => ("Microsoft Outlook / Hotmail Credentials", "Enter your Microsoft / Outlook email address and password:"),
+        "yahoo" => ("Yahoo! Mail Credentials", "Enter your Yahoo email address and generated App Password:"),
+        _ => ("Account Credentials", "Enter your email address, login name, and password:"),
+    };
+    set_text_by_id(doc, "wiz-cred-title", cred_title);
+    set_text_by_id(doc, "wiz-cred-desc", cred_desc);
+
+    // Populate standard input controls with current wizard state
+    sync_input(doc, "wiz-persname", &state.wizard.persona_name);
+    sync_input(doc, "wiz-yourname", &state.wizard.real_name);
+    sync_input(doc, "wiz-email", &state.wizard.return_address);
+    sync_input(doc, "wiz-login", &state.wizard.login_name);
+    sync_input(doc, "wiz-inserver", &state.wizard.incoming_server);
+    let inport_str = state.wizard.incoming_port.to_string();
+    sync_input(doc, "wiz-inport", &inport_str);
+    sync_input(doc, "wiz-outserver", &state.wizard.smtp_server);
+    let outport_str = state.wizard.smtp_port.to_string();
+    sync_input(doc, "wiz-outport", &outport_str);
+
+    // Protocol radio sync
+    if state.wizard.incoming_protocol.eq_ignore_ascii_case("IMAP") {
+        if let Some(el) = doc.get_element_by_id("wiz-proto-imap") {
+            doc.set_attribute(el, "checked", "checked");
+        }
+        if let Some(el) = doc.get_element_by_id("wiz-proto-pop") {
+            doc.remove_attribute(el, "checked");
+        }
+    } else {
+        if let Some(el) = doc.get_element_by_id("wiz-proto-pop") {
+            doc.set_attribute(el, "checked", "checked");
+        }
+        if let Some(el) = doc.get_element_by_id("wiz-proto-imap") {
+            doc.remove_attribute(el, "checked");
+        }
+    }
+
+    // SSL checkboxes sync
+    if let Some(el) = doc.get_element_by_id("wiz-in-ssl") {
+        if state.wizard.incoming_ssl {
+            doc.set_attribute(el, "checked", "checked");
+        } else {
+            doc.remove_attribute(el, "checked");
+        }
+    }
+    if let Some(el) = doc.get_element_by_id("wiz-out-ssl") {
+        if state.wizard.smtp_ssl {
+            doc.set_attribute(el, "checked", "checked");
+        } else {
+            doc.remove_attribute(el, "checked");
+        }
+    }
+    if let Some(el) = doc.get_element_by_id("wiz-out-auth") {
+        if state.wizard.smtp_auth_allowed {
+            doc.set_attribute(el, "checked", "checked");
+        } else {
+            doc.remove_attribute(el, "checked");
+        }
+    }
+
+    // Summary Card on step 8
+    let summary_name = if !state.wizard.real_name.is_empty() {
+        state.wizard.real_name.clone()
+    } else if let Some((u, _)) = state.wizard.return_address.split_once('@') {
+        u.to_string()
+    } else {
+        "(Not Specified)".to_string()
+    };
+    let summary_login = if !state.wizard.login_name.is_empty() {
+        state.wizard.login_name.clone()
+    } else if let Some((u, _)) = state.wizard.return_address.split_once('@') {
+        u.to_string()
+    } else {
+        "(Not Specified)".to_string()
+    };
+    let summary_email = if !state.wizard.return_address.is_empty() {
+        state.wizard.return_address.clone()
+    } else {
+        "(Not Specified)".to_string()
+    };
+    let summary_pers = if state.wizard.persona_name.is_empty() {
+        "(Dominant / Primary)".to_string()
+    } else {
+        state.wizard.persona_name.clone()
+    };
+
+    set_text_by_id(doc, "wiz-sum-pers", &summary_pers);
+    set_text_by_id(doc, "wiz-sum-name", &summary_name);
+    set_text_by_id(doc, "wiz-sum-email", &summary_email);
+    set_text_by_id(doc, "wiz-sum-login", &summary_login);
+
+    let in_ssl_str = if state.wizard.incoming_ssl { "SSL/TLS" } else { "Plain" };
+    set_text_by_id(
+        doc,
+        "wiz-sum-in",
+        &format!(
+            "{} : {} ({} · {})",
+            if state.wizard.incoming_server.is_empty() { "none" } else { &state.wizard.incoming_server },
+            state.wizard.incoming_port,
+            state.wizard.incoming_protocol,
+            in_ssl_str
+        ),
+    );
+
+    let out_ssl_str = if state.wizard.smtp_ssl { "SSL/TLS" } else { "Plain" };
+    let out_auth_str = if state.wizard.smtp_auth_allowed { "Auth Enabled" } else { "No Auth" };
+    set_text_by_id(
+        doc,
+        "wiz-sum-out",
+        &format!(
+            "{} : {} ({} · {})",
+            if state.wizard.smtp_server.is_empty() { "none" } else { &state.wizard.smtp_server },
+            state.wizard.smtp_port,
+            out_ssl_str,
+            out_auth_str
+        ),
+    );
+
+    // Update buttons
+    let is_first = if is_dom { cur_step == 0 } else { cur_step == 1 };
+    if let Some(back_btn) = doc.get_element_by_id("wiz-btn-back") {
+        if is_first {
+            doc.set_attribute(back_btn, "disabled", "true");
+        } else {
+            doc.remove_attribute(back_btn, "disabled");
+        }
+    }
+
+    if let Some(_next_btn) = doc.get_element_by_id("wiz-btn-next") {
+        if cur_step == 8 {
+            set_text_by_id(doc, "wiz-btn-next", "Finish ✓");
+        } else {
+            set_text_by_id(doc, "wiz-btn-next", "Next >");
         }
     }
 }
@@ -5197,9 +5436,548 @@ fn render_settings_personalities(doc: &mut Document, state: &AppState) {
     }
 }
 
+fn read_wizard_input(doc: &Document, id_str: &str) -> Option<String> {
+    let el = doc.get_element_by_id(id_str)?;
+    let v = doc.value(el);
+    let trimmed = v.trim();
+    if !trimmed.is_empty() {
+        return Some(trimmed.to_string());
+    }
+    if let Some(a) = doc.get_attribute(el, "value") {
+        let trimmed_a = a.trim();
+        if !trimmed_a.is_empty() {
+            return Some(trimmed_a.to_string());
+        }
+    }
+    None
+}
+
+fn sync_wizard_from_dom(doc: &Document, wizard: &mut WizardState) {
+    // Step-targeted syncing prevents inactive inputs from clobbering active state
+    match wizard.step {
+        1 => {
+            // Step 1: Account setup radios
+            if let Some(el) = doc.get_element_by_id("wiz-radio-new") {
+                if doc.has_attribute(el, "checked") || doc.value(el) == "true" {
+                    wizard.account_choice = 0;
+                }
+            }
+            if let Some(el) = doc.get_element_by_id("wiz-radio-detect") {
+                if doc.has_attribute(el, "checked") || doc.value(el) == "true" {
+                    wizard.account_choice = 2;
+                }
+            }
+            if let Some(el) = doc.get_element_by_id("wiz-radio-skip") {
+                if doc.has_attribute(el, "checked") || doc.value(el) == "true" {
+                    wizard.account_choice = 3;
+                }
+            }
+            if let Some(el) = doc.get_element_by_id("wiz-radio-import") {
+                if doc.has_attribute(el, "checked") || doc.value(el) == "true" {
+                    wizard.account_choice = 1;
+                }
+            }
+        }
+        2 => {
+            if let Some(v) = read_wizard_input(doc, "wiz-persname") {
+                wizard.persona_name = v;
+            }
+        }
+        3 => {
+            if let Some(v) = read_wizard_input(doc, "wiz-yourname") {
+                wizard.real_name = v;
+            }
+        }
+        4 => {
+            if let Some(v) = read_wizard_input(doc, "wiz-email") {
+                wizard.return_address = v;
+            }
+        }
+        5 => {
+            if let Some(v) = read_wizard_input(doc, "wiz-login") {
+                wizard.login_name = v;
+            }
+        }
+        6 => {
+            if let Some(v) = read_wizard_input(doc, "wiz-inserver") {
+                wizard.incoming_server = v;
+            }
+            if let Some(v) = read_wizard_input(doc, "wiz-inport") {
+                if let Ok(port) = v.parse::<u16>() {
+                    wizard.incoming_port = port;
+                }
+            }
+            if let Some(el) = doc.get_element_by_id("wiz-proto-imap") {
+                if doc.has_attribute(el, "checked") || doc.value(el) == "true" {
+                    wizard.incoming_protocol = "IMAP".to_string();
+                } else {
+                    wizard.incoming_protocol = "POP".to_string();
+                }
+            }
+            if let Some(el) = doc.get_element_by_id("wiz-in-ssl") {
+                wizard.incoming_ssl = doc.has_attribute(el, "checked") || doc.value(el) == "on" || doc.value(el) == "true";
+            }
+        }
+        7 => {
+            if let Some(v) = read_wizard_input(doc, "wiz-outserver") {
+                wizard.smtp_server = v;
+            }
+            if let Some(v) = read_wizard_input(doc, "wiz-outport") {
+                if let Ok(port) = v.parse::<u16>() {
+                    wizard.smtp_port = port;
+                }
+            }
+            if let Some(el) = doc.get_element_by_id("wiz-out-auth") {
+                wizard.smtp_auth_allowed = doc.has_attribute(el, "checked") || doc.value(el) == "on" || doc.value(el) == "true";
+            }
+            if let Some(el) = doc.get_element_by_id("wiz-out-ssl") {
+                wizard.smtp_ssl = doc.has_attribute(el, "checked") || doc.value(el) == "on" || doc.value(el) == "true";
+            }
+        }
+        9 => {
+            // Step 9: Provider selection radios
+            if let Some(el) = doc.get_element_by_id("wiz-prov-gmail") {
+                if doc.has_attribute(el, "checked") || doc.value(el) == "true" {
+                    wizard.provider = "gmail".to_string();
+                }
+            }
+            if let Some(el) = doc.get_element_by_id("wiz-prov-outlook") {
+                if doc.has_attribute(el, "checked") || doc.value(el) == "true" {
+                    wizard.provider = "outlook".to_string();
+                }
+            }
+            if let Some(el) = doc.get_element_by_id("wiz-prov-yahoo") {
+                if doc.has_attribute(el, "checked") || doc.value(el) == "true" {
+                    wizard.provider = "yahoo".to_string();
+                }
+            }
+            if let Some(el) = doc.get_element_by_id("wiz-prov-other") {
+                if doc.has_attribute(el, "checked") || doc.value(el) == "true" {
+                    wizard.provider = "other".to_string();
+                }
+            }
+        }
+        10 => {
+            // Step 10: Credentials inputs
+            if let Some(v) = read_wizard_input(doc, "wiz-cred-email") {
+                wizard.return_address = v;
+                if let Some((u, _)) = wizard.return_address.split_once('@') {
+                    if wizard.login_name.is_empty() {
+                        wizard.login_name = u.trim().to_string();
+                    }
+                }
+            }
+            if let Some(v) = read_wizard_input(doc, "wiz-cred-password") {
+                wizard.password = v;
+            }
+            if let Some(v) = read_wizard_input(doc, "wiz-cred-name") {
+                wizard.real_name = v;
+            }
+            if let Some(el) = doc.get_element_by_id("wiz-cred-proto-imap") {
+                if doc.has_attribute(el, "checked") || doc.value(el) == "true" {
+                    wizard.incoming_protocol = "IMAP".to_string();
+                }
+            }
+            if let Some(el) = doc.get_element_by_id("wiz-cred-proto-pop") {
+                if doc.has_attribute(el, "checked") || doc.value(el) == "true" {
+                    wizard.incoming_protocol = "POP".to_string();
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn apply_provider_defaults(wizard: &mut WizardState) {
+    let email = wizard.return_address.trim().to_string();
+    let is_pop = wizard.incoming_protocol.eq_ignore_ascii_case("POP");
+    if let Some((user, domain)) = email.split_once('@') {
+        if wizard.login_name.is_empty() {
+            wizard.login_name = user.trim().to_string();
+        }
+        let dom = domain.trim().to_lowercase();
+        match wizard.provider.as_str() {
+            "gmail" => {
+                if is_pop {
+                    wizard.incoming_server = "pop.gmail.com".to_string();
+                    wizard.incoming_port = 995;
+                } else {
+                    wizard.incoming_protocol = "IMAP".to_string();
+                    wizard.incoming_server = "imap.gmail.com".to_string();
+                    wizard.incoming_port = 993;
+                }
+                wizard.incoming_ssl = true;
+                wizard.smtp_server = "smtp.gmail.com".to_string();
+                wizard.smtp_port = 465;
+                wizard.smtp_ssl = true;
+                wizard.smtp_auth_allowed = true;
+            }
+            "outlook" => {
+                if is_pop {
+                    wizard.incoming_server = "outlook.office365.com".to_string();
+                    wizard.incoming_port = 995;
+                } else {
+                    wizard.incoming_protocol = "IMAP".to_string();
+                    wizard.incoming_server = "outlook.office365.com".to_string();
+                    wizard.incoming_port = 993;
+                }
+                wizard.incoming_ssl = true;
+                wizard.smtp_server = "smtp.office365.com".to_string();
+                wizard.smtp_port = 587;
+                wizard.smtp_ssl = true;
+                wizard.smtp_auth_allowed = true;
+            }
+            "yahoo" => {
+                if is_pop {
+                    wizard.incoming_server = "pop.mail.yahoo.com".to_string();
+                    wizard.incoming_port = 995;
+                } else {
+                    wizard.incoming_protocol = "IMAP".to_string();
+                    wizard.incoming_server = "imap.mail.yahoo.com".to_string();
+                    wizard.incoming_port = 993;
+                }
+                wizard.incoming_ssl = true;
+                wizard.smtp_server = "smtp.mail.yahoo.com".to_string();
+                wizard.smtp_port = 465;
+                wizard.smtp_ssl = true;
+                wizard.smtp_auth_allowed = true;
+            }
+            _ => {
+                if wizard.incoming_server.is_empty() {
+                    wizard.incoming_server = format!("mail.{}", dom);
+                }
+                if wizard.smtp_server.is_empty() {
+                    wizard.smtp_server = format!("smtp.{}", dom);
+                }
+                if wizard.incoming_port == 0 {
+                    wizard.incoming_port = if is_pop { 995 } else { 993 };
+                }
+                wizard.incoming_ssl = true;
+                wizard.smtp_port = 587;
+                wizard.smtp_ssl = true;
+                wizard.smtp_auth_allowed = true;
+            }
+        }
+    }
+}
+
+fn discover_into_wizard(email: &str, wizard: &mut WizardState) {
+    if let Some((user, domain)) = email.split_once('@') {
+        let dom = domain.trim().to_lowercase();
+        if wizard.login_name.is_empty() {
+            wizard.login_name = user.trim().to_string();
+        }
+        if dom == "gmail.com" || dom == "googlemail.com" {
+            wizard.incoming_server = "imap.gmail.com".to_string();
+            wizard.incoming_port = 993;
+            wizard.incoming_protocol = "IMAP".to_string();
+            wizard.incoming_ssl = true;
+            wizard.smtp_server = "smtp.gmail.com".to_string();
+            wizard.smtp_port = 465;
+            wizard.smtp_ssl = true;
+            wizard.smtp_auth_allowed = true;
+        } else if dom == "outlook.com" || dom == "hotmail.com" || dom == "live.com" || dom == "office365.com" {
+            wizard.incoming_server = "outlook.office365.com".to_string();
+            wizard.incoming_port = 993;
+            wizard.incoming_protocol = "IMAP".to_string();
+            wizard.incoming_ssl = true;
+            wizard.smtp_server = "smtp.office365.com".to_string();
+            wizard.smtp_port = 587;
+            wizard.smtp_ssl = true;
+            wizard.smtp_auth_allowed = true;
+        } else if dom == "yahoo.com" || dom == "ymail.com" {
+            wizard.incoming_server = "imap.mail.yahoo.com".to_string();
+            wizard.incoming_port = 993;
+            wizard.incoming_protocol = "IMAP".to_string();
+            wizard.incoming_ssl = true;
+            wizard.smtp_server = "smtp.mail.yahoo.com".to_string();
+            wizard.smtp_port = 465;
+            wizard.smtp_ssl = true;
+            wizard.smtp_auth_allowed = true;
+        } else if dom == "icloud.com" || dom == "me.com" || dom == "mac.com" {
+            wizard.incoming_server = "imap.mail.me.com".to_string();
+            wizard.incoming_port = 993;
+            wizard.incoming_protocol = "IMAP".to_string();
+            wizard.incoming_ssl = true;
+            wizard.smtp_server = "smtp.mail.me.com".to_string();
+            wizard.smtp_port = 587;
+            wizard.smtp_ssl = true;
+            wizard.smtp_auth_allowed = true;
+        } else {
+            if wizard.incoming_server.is_empty() || wizard.incoming_server == "mail.isp.com" {
+                wizard.incoming_server = format!("mail.{}", dom);
+                wizard.incoming_port = 995;
+                wizard.incoming_protocol = "POP".to_string();
+                wizard.incoming_ssl = true;
+            }
+            if wizard.smtp_server.is_empty() || wizard.smtp_server == "smtp.isp.com" {
+                wizard.smtp_server = format!("smtp.{}", dom);
+                wizard.smtp_port = 587;
+                wizard.smtp_ssl = true;
+                wizard.smtp_auth_allowed = true;
+            }
+        }
+    }
+}
+
+fn save_wizard_to_config(state: &mut AppState) {
+    let email = state.wizard.return_address.trim().to_string();
+    let real_name = if !state.wizard.real_name.is_empty() {
+        state.wizard.real_name.trim().to_string()
+    } else if let Some((u, _)) = email.split_once('@') {
+        u.to_string()
+    } else {
+        String::new()
+    };
+    let login = if !state.wizard.login_name.is_empty() {
+        state.wizard.login_name.trim().to_string()
+    } else if let Some((u, _)) = email.split_once('@') {
+        u.to_string()
+    } else {
+        String::new()
+    };
+
+    if state.wizard.is_dominant {
+        // Modern sections
+        state.conf.set("sending_mail", "real_name", &real_name);
+        state.conf.set("sending_mail", "email_address", &email);
+        state.conf.set("sending_mail", "email", &email);
+        state.conf.set("sending_mail", "smtp_server", &state.wizard.smtp_server);
+
+        state.conf.set("checking_mail", "pop_server", &state.wizard.incoming_server);
+        state.conf.set("checking_mail", "pop_username", &login);
+        state.conf.set_bool("checking_mail", "use_imap", state.wizard.incoming_protocol.eq_ignore_ascii_case("IMAP"));
+        state.conf.set("checking_mail", "account_type", &state.wizard.incoming_protocol);
+        state.conf.set_bool("checking_mail", "leave_on_server", true);
+
+        state.conf.set("getting_mail", "server", &state.wizard.incoming_server);
+        state.conf.set("getting_mail", "username", &login);
+        state.conf.set("getting_mail", "account_type", &state.wizard.incoming_protocol);
+        state.conf.set("getting_mail", "ssl_mode", if state.wizard.incoming_ssl { "1" } else { "0" });
+
+        state.conf.set_bool("ssl", "use_ssl", state.wizard.incoming_ssl);
+        state.conf.set_int("ssl", "ssl_pop_mode", if state.wizard.incoming_ssl { 1 } else { 0 });
+        state.conf.set_int("ssl", "ssl_smtp_mode", if state.wizard.smtp_ssl { 1 } else { 0 });
+
+        // Classic Eudora [Settings] section
+        state.conf.set("Settings", "RealName", &real_name);
+        state.conf.set("Settings", "ReturnAddress", &email);
+        state.conf.set("Settings", "MailServer", &state.wizard.incoming_server);
+        state.conf.set("Settings", "LoginName", &login);
+        state.conf.set("Settings", "SMTPServer", &state.wizard.smtp_server);
+        state.conf.set("Settings", "POPAccount", &format!("{}@{}", login, state.wizard.incoming_server));
+
+        let acct = macmbx::conf::Account {
+            index: 1,
+            name: "Dominant".to_string(),
+            real_name: real_name.clone(),
+            email: email.clone(),
+            account_type: state.wizard.incoming_protocol.clone(),
+            server: state.wizard.incoming_server.clone(),
+            smtp_server: state.wizard.smtp_server.clone(),
+            username: login.clone(),
+            check_interval: 15,
+            ssl_mode: if state.wizard.incoming_ssl { 1 } else { 0 },
+            leave_on_server: true,
+            enabled: true,
+        };
+        if state.conf.count_accounts() > 0 {
+            state.conf.update_account(1, &acct);
+        } else {
+            state.conf.add_account(&acct);
+        }
+    } else {
+        let count = state.conf.count_accounts();
+        let new_idx = count as i32 + 1;
+        let acct = macmbx::conf::Account {
+            index: new_idx,
+            name: if state.wizard.persona_name.is_empty() {
+                format!("Personality {}", new_idx)
+            } else {
+                state.wizard.persona_name.clone()
+            },
+            real_name: real_name.clone(),
+            email: email.clone(),
+            account_type: state.wizard.incoming_protocol.clone(),
+            server: state.wizard.incoming_server.clone(),
+            smtp_server: state.wizard.smtp_server.clone(),
+            username: login.clone(),
+            check_interval: 15,
+            ssl_mode: if state.wizard.incoming_ssl { 1 } else { 0 },
+            leave_on_server: true,
+            enabled: true,
+        };
+        state.conf.add_account(&acct);
+    }
+    let ini_path = state.data_dir.join("geudora.ini");
+    let _ = state.conf.save_as(&ini_path);
+    state.status_left = "✓ Account setup completed".to_string();
+    state.settings_status = "✓ Saved account configuration".to_string();
+    state.dirty = true;
+}
+
+fn render_wizard_all(doc: &mut Document, state: &mut AppState) {
+    sync_theme_and_mode(doc, state.skin, state.last_mail_skin, state.dark_mode);
+
+    let is_dom = state.wizard.is_dominant;
+    let cur_step = state.wizard.step;
+
+    // Show/hide personality step tab and checklist item
+    if let Some(el) = doc.get_element_by_id("wiz-tab-2") {
+        doc.set_style_property(el, "display", if is_dom { "none" } else { "flex" });
+    }
+    if let Some(el) = doc.get_element_by_id("chk-2") {
+        doc.set_style_property(el, "display", if is_dom { "none" } else { "flex" });
+    }
+    if let Some(el) = doc.get_element_by_id("chk-0") {
+        doc.set_style_property(el, "display", if is_dom { "flex" } else { "none" });
+    }
+    if let Some(el) = doc.get_element_by_id("wiz-sum-row-pers") {
+        doc.set_style_property(el, "display", if is_dom { "none" } else { "grid" });
+    }
+
+    // Update tabs and panes
+    for i in 0..=8 {
+        if let Some(tab_el) = doc.get_element_by_id(&format!("wiz-tab-{}", i)) {
+            if i == cur_step {
+                doc.class_list_add(tab_el, "active");
+            } else {
+                doc.class_list_remove(tab_el, "active");
+            }
+        }
+
+        if let Some(chk_el) = doc.get_element_by_id(&format!("chk-{}", i)) {
+            doc.class_list_remove(chk_el, "current");
+            doc.class_list_remove(chk_el, "done");
+            if i < cur_step {
+                doc.class_list_add(chk_el, "done");
+            } else if i == cur_step {
+                doc.class_list_add(chk_el, "current");
+            }
+        }
+
+        if let Some(pane_el) = doc.get_element_by_id(&format!("wiz-step-{}", i)) {
+            if i == cur_step {
+                doc.class_list_add(pane_el, "active");
+            } else {
+                doc.class_list_remove(pane_el, "active");
+            }
+        }
+    }
+
+    // Populate input controls with current wizard state
+    if let Some(el) = doc.get_element_by_id("wiz-persname") {
+        doc.set_attribute(el, "value", &state.wizard.persona_name);
+    }
+    if let Some(el) = doc.get_element_by_id("wiz-yourname") {
+        doc.set_attribute(el, "value", &state.wizard.real_name);
+    }
+    if let Some(el) = doc.get_element_by_id("wiz-email") {
+        doc.set_attribute(el, "value", &state.wizard.return_address);
+    }
+    if let Some(el) = doc.get_element_by_id("wiz-login") {
+        doc.set_attribute(el, "value", &state.wizard.login_name);
+    }
+    if let Some(el) = doc.get_element_by_id("wiz-inserver") {
+        doc.set_attribute(el, "value", &state.wizard.incoming_server);
+    }
+    if let Some(el) = doc.get_element_by_id("wiz-inport") {
+        doc.set_attribute(el, "value", &state.wizard.incoming_port.to_string());
+    }
+    if let Some(el) = doc.get_element_by_id("wiz-outserver") {
+        doc.set_attribute(el, "value", &state.wizard.smtp_server);
+    }
+    if let Some(el) = doc.get_element_by_id("wiz-outport") {
+        doc.set_attribute(el, "value", &state.wizard.smtp_port.to_string());
+    }
+
+    // Summary Card on final step
+    set_text_by_id(
+        doc,
+        "wiz-sum-pers",
+        if state.wizard.persona_name.is_empty() {
+            "(Dominant / Primary)"
+        } else {
+            &state.wizard.persona_name
+        },
+    );
+    set_text_by_id(
+        doc,
+        "wiz-sum-name",
+        if state.wizard.real_name.is_empty() {
+            "(Not Specified)"
+        } else {
+            &state.wizard.real_name
+        },
+    );
+    set_text_by_id(
+        doc,
+        "wiz-sum-email",
+        if state.wizard.return_address.is_empty() {
+            "(Not Specified)"
+        } else {
+            &state.wizard.return_address
+        },
+    );
+    set_text_by_id(
+        doc,
+        "wiz-sum-login",
+        if state.wizard.login_name.is_empty() {
+            "(Not Specified)"
+        } else {
+            &state.wizard.login_name
+        },
+    );
+
+    let in_ssl_str = if state.wizard.incoming_ssl { "SSL/TLS" } else { "Plain" };
+    set_text_by_id(
+        doc,
+        "wiz-sum-in",
+        &format!(
+            "{} : {} ({} · {})",
+            if state.wizard.incoming_server.is_empty() { "none" } else { &state.wizard.incoming_server },
+            state.wizard.incoming_port,
+            state.wizard.incoming_protocol,
+            in_ssl_str
+        ),
+    );
+
+    let out_ssl_str = if state.wizard.smtp_ssl { "SSL/TLS" } else { "Plain" };
+    let out_auth_str = if state.wizard.smtp_auth_allowed { "Auth Enabled" } else { "No Auth" };
+    set_text_by_id(
+        doc,
+        "wiz-sum-out",
+        &format!(
+            "{} : {} ({} · {})",
+            if state.wizard.smtp_server.is_empty() { "none" } else { &state.wizard.smtp_server },
+            state.wizard.smtp_port,
+            out_ssl_str,
+            out_auth_str
+        ),
+    );
+
+    // Update buttons
+    let is_first = if is_dom { cur_step == 0 } else { cur_step == 1 };
+    if let Some(back_btn) = doc.get_element_by_id("wiz-btn-back") {
+        if is_first {
+            doc.set_attribute(back_btn, "disabled", "true");
+        } else {
+            doc.remove_attribute(back_btn, "disabled");
+        }
+    }
+
+    if let Some(next_btn) = doc.get_element_by_id("wiz-btn-next") {
+        if cur_step == 8 {
+            doc.set_text_content(next_btn, "Finish");
+        } else {
+            doc.set_text_content(next_btn, "Next >");
+        }
+    }
+}
+
 fn sync_theme_and_mode(doc: &mut Document, skin: Skin, last_mail_skin: Skin, dark: bool) {
     let effective_skin = match skin {
-        Skin::Settings => last_mail_skin,
+        Skin::Settings | Skin::Wizard => last_mail_skin,
         _ => skin,
     };
     let root_id = doc.root.node_id;
@@ -5207,7 +5985,7 @@ fn sync_theme_and_mode(doc: &mut Document, skin: Skin, last_mail_skin: Skin, dar
         doc.class_list_remove(el, "eudora-theme");
         doc.class_list_remove(el, "email-theme");
         match effective_skin {
-            Skin::Eudora | Skin::Settings => doc.class_list_add(el, "eudora-theme"),
+            Skin::Eudora | Skin::Settings | Skin::Wizard => doc.class_list_add(el, "eudora-theme"),
             Skin::Email => doc.class_list_add(el, "email-theme"),
         }
         if dark {
@@ -5232,6 +6010,7 @@ fn render_active_skin(doc: &mut Document, state: &mut AppState) {
         Skin::Eudora => render_eudora_all(doc, state),
         Skin::Email => render_email_all(doc, state),
         Skin::Settings => render_settings_all(doc, state),
+        Skin::Wizard => render_wizard_all(doc, state),
     }
     doc.style_dirty = true;
     doc.layout_generation = doc.layout_generation.wrapping_add(1);
@@ -5245,12 +6024,16 @@ fn render_active_skin(doc: &mut Document, state: &mut AppState) {
 fn register_listeners(doc: &mut Document, state: Arc<Mutex<AppState>>) {
     let root = doc.root.node_id;
 
-    // Intercept keypress to prevent duplicate text input in contenteditable editor
+    // Intercept keypress only inside compose-body to prevent duplicate text input in contenteditable editor
     doc.add_event_listener(
         root,
         "keypress",
-        Box::new(move |evt, _doc| {
-            evt.prevent_default();
+        Box::new(move |evt, doc| {
+            if let Some(body_el) = doc.get_element_by_id("compose-body") {
+                if doc.contains(body_el, evt.target) {
+                    evt.prevent_default();
+                }
+            }
         }),
         ListenerOptions::capture(true),
     );
@@ -5346,6 +6129,13 @@ fn register_listeners(doc: &mut Document, state: Arc<Mutex<AppState>>) {
 }
 
 fn handle_change(doc: &mut Document, target: u32, state: &mut AppState) {
+    if let Some(in_el) = doc.closest(target, "input, select, textarea") {
+        if let Some(id) = doc.get_attribute(in_el, "id") {
+            if id.starts_with("wiz-") {
+                sync_wizard_from_dom(doc, &mut state.wizard);
+            }
+        }
+    }
     if let Some(sel_el) = doc.closest(target, "select") {
         let val = doc.value(sel_el);
         if let Some(id) = doc.get_attribute(sel_el, "id") {
@@ -5779,6 +6569,54 @@ fn handle_click(doc: &mut Document, target: u32, state: &mut AppState) {
         }
     }
 
+    // 0.69 Check wizard step tab click
+    if let Some(tab_el) = doc.closest(target, "[data-wiz-step]") {
+        if let Some(step_str) = doc.get_attribute(tab_el, "data-wiz-step") {
+            if let Ok(step_idx) = step_str.parse::<usize>() {
+                sync_wizard_from_dom(doc, &mut state.wizard);
+                state.wizard.step = step_idx;
+                render_active_skin(doc, state);
+                return;
+            }
+        }
+    }
+
+    // Wizard radio options / choice cards click
+    if let Some(opt_el) = doc.closest(target, ".wiz-choice-card, .wiz-radio-opt, input[name='wiz-acct-choice']") {
+        for (choice, id, card_id) in [
+            (0, "wiz-radio-new", "wiz-card-choice-0"),
+            (2, "wiz-radio-detect", "wiz-card-choice-2"),
+            (3, "wiz-radio-skip", "wiz-card-choice-3"),
+            (1, "wiz-radio-import", "wiz-card-choice-1"),
+        ] {
+            let matches_radio = doc.get_element_by_id(id).map_or(false, |el| el == opt_el || doc.contains(opt_el, el) || doc.contains(el, target));
+            let matches_card = doc.get_element_by_id(card_id).map_or(false, |el| el == opt_el || doc.contains(opt_el, el) || doc.contains(el, target));
+            if matches_radio || matches_card {
+                state.wizard.account_choice = choice;
+                render_active_skin(doc, state);
+                return;
+            }
+        }
+    }
+
+    // Wizard provider card click
+    if let Some(card_el) = doc.closest(target, ".wiz-provider-card, input[name='wiz-prov-choice']") {
+        for (p, id, card_id) in [
+            ("gmail", "wiz-prov-gmail", "wiz-card-prov-gmail"),
+            ("outlook", "wiz-prov-outlook", "wiz-card-prov-outlook"),
+            ("yahoo", "wiz-prov-yahoo", "wiz-card-prov-yahoo"),
+            ("other", "wiz-prov-other", "wiz-card-prov-other"),
+        ] {
+            let matches_radio = doc.get_element_by_id(id).map_or(false, |el| el == card_el || doc.contains(card_el, el) || doc.contains(el, target));
+            let matches_card = doc.get_element_by_id(card_id).map_or(false, |el| el == card_el || doc.contains(card_el, el) || doc.contains(el, target));
+            if matches_radio || matches_card {
+                state.wizard.provider = p.to_string();
+                render_active_skin(doc, state);
+                return;
+            }
+        }
+    }
+
     // 0.7 Check settings category sidebar selection
     if let Some(cat_el) = doc.closest(target, "[data-settings-cat]") {
         if let Some(cat) = doc.get_attribute(cat_el, "data-settings-cat") {
@@ -5996,6 +6834,114 @@ fn handle_click(doc: &mut Document, target: u32, state: &mut AppState) {
                     render_active_skin(doc, state);
                     return;
                 }
+                "open-wizard" => {
+                    state.wizard = WizardState::new_dominant();
+                    state.wizard_modal_open = true;
+                    render_active_skin(doc, state);
+                    return;
+                }
+                "open-wizard-personality" => {
+                    state.wizard = WizardState::new_personality();
+                    state.wizard_modal_open = true;
+                    render_active_skin(doc, state);
+                    return;
+                }
+                "wiz-modal-close" | "close-wizard" => {
+                    if state.wizard_modal_open {
+                        state.wizard_modal_open = false;
+                        render_active_skin(doc, state);
+                        return;
+                    }
+                    state.pending_skin = Some(state.last_mail_skin);
+                    return;
+                }
+                "wiz-next" => {
+                    sync_wizard_from_dom(doc, &mut state.wizard);
+                    match state.wizard.step {
+                        0 => {
+                            state.wizard.step = 1;
+                        }
+                        1 => {
+                            match state.wizard.account_choice {
+                                2 => {
+                                    state.wizard.flow = WizardFlow::Detect;
+                                    state.wizard.step = 9; // Pick provider
+                                }
+                                3 => {
+                                    state.wizard.flow = WizardFlow::Advanced;
+                                    state.wizard.step = 6; // Manual incoming server
+                                }
+                                1 => {
+                                    state.wizard.flow = WizardFlow::Import;
+                                    state.wizard.step = 11; // Import settings
+                                }
+                                _ => {
+                                    state.wizard.flow = WizardFlow::Standard;
+                                    state.wizard.step = if state.wizard.is_dominant { 3 } else { 2 };
+                                }
+                            }
+                        }
+                        2 => state.wizard.step = 3,
+                        3 => state.wizard.step = 4,
+                        4 => {
+                            let email = state.wizard.return_address.clone();
+                            discover_into_wizard(&email, &mut state.wizard);
+                            state.wizard.step = 5;
+                        }
+                        5 => state.wizard.step = 6,
+                        6 => state.wizard.step = 7,
+                        7 => state.wizard.step = 8,
+                        9 => {
+                            state.wizard.step = 10; // Enter credentials
+                        }
+                        10 => {
+                            apply_provider_defaults(&mut state.wizard);
+                            state.wizard.step = 8; // Confirm settings
+                        }
+                        11 => {
+                            state.wizard.flow = WizardFlow::Detect;
+                            state.wizard.step = 9; // Proceed to provider detect
+                        }
+                        8 => {
+                            save_wizard_to_config(state);
+                            if state.wizard_modal_open {
+                                state.wizard_modal_open = false;
+                                render_active_skin(doc, state);
+                                return;
+                            }
+                            state.pending_skin = Some(state.last_mail_skin);
+                            return;
+                        }
+                        _ => state.wizard.step = 8,
+                    }
+                    render_active_skin(doc, state);
+                    return;
+                }
+                "wiz-back" => {
+                    sync_wizard_from_dom(doc, &mut state.wizard);
+                    let prev_step = match state.wizard.step {
+                        0 => 0,
+                        1 => 0,
+                        2 => 1,
+                        3 => if state.wizard.is_dominant { 1 } else { 2 },
+                        4 => 3,
+                        5 => 4,
+                        6 => if state.wizard.flow == WizardFlow::Advanced { 1 } else { 5 },
+                        7 => 6,
+                        8 => match state.wizard.flow {
+                            WizardFlow::Detect => 10,
+                            WizardFlow::Advanced => 7,
+                            _ => 7,
+                        },
+                        9 => 1,
+                        10 => 9,
+                        11 => 1,
+                        _ => 1,
+                    };
+                    state.wizard.step = prev_step;
+                    render_active_skin(doc, state);
+                    return;
+                }
                 "open-settings" => {
                     if state.skin != Skin::Settings {
                         state.last_mail_skin = state.skin;
@@ -6205,13 +7151,13 @@ fn handle_click(doc: &mut Document, target: u32, state: &mut AppState) {
                     let next = match state.skin {
                         Skin::Eudora => Skin::Email,
                         Skin::Email => Skin::Eudora,
-                        Skin::Settings => match state.last_mail_skin {
+                        Skin::Settings | Skin::Wizard => match state.last_mail_skin {
                             Skin::Eudora => Skin::Email,
                             _ => Skin::Eudora,
                         },
                     };
                     state.last_mail_skin = next;
-                    if state.skin == Skin::Settings {
+                    if state.skin == Skin::Settings || state.skin == Skin::Wizard {
                         render_active_skin(doc, state);
                     } else {
                         state.pending_skin = Some(next);
@@ -6225,6 +7171,19 @@ fn handle_click(doc: &mut Document, target: u32, state: &mut AppState) {
                 }
                 "check-mail" => {
                     state.reload_from_disk();
+                    let mail_srv = state.conf.get("checking_mail", "pop_server")
+                        .or_else(|| state.conf.get("Settings", "MailServer"))
+                        .unwrap_or_default();
+                    let in_unread = state.unread_count("In");
+                    let total_msgs = state.messages.len();
+                    state.status_logs.push(StatusLog {
+                        time: current_clock_str(),
+                        message: if !mail_srv.is_empty() && mail_srv != "mail.example.com" {
+                            format!("Mail check complete on {}: {} msgs ({} unread in In)", mail_srv, total_msgs, in_unread)
+                        } else {
+                            "Mail check: Local mailboxes reloaded (no server configured)".to_string()
+                        },
+                    });
                     render_active_skin(doc, state);
                     return;
                 }
@@ -6464,8 +7423,8 @@ fn handle_click(doc: &mut Document, target: u32, state: &mut AppState) {
                 }
                 "send-queued" => {
                     let out_path = state.data_dir.join("mailboxes").join("Out");
+                    let mut sent_count = 0;
                     if let Ok(mut toc) = macmbx::toc::Toc::open_or_create(&out_path) {
-                        let mut sent_count = 0;
                         for msg in &mut toc.msgs {
                             if msg.state == macmbx::toc::State::Queued {
                                 msg.state = macmbx::toc::State::Sent;
@@ -6473,9 +7432,21 @@ fn handle_click(doc: &mut Document, target: u32, state: &mut AppState) {
                             }
                         }
                         let _ = toc.save();
-                        state.reload_from_disk();
-                        state.status_left = format!("Delivered {} queued messages", sent_count);
                     }
+                    state.reload_from_disk();
+                    state.status_logs.push(StatusLog {
+                        time: current_clock_str(),
+                        message: if sent_count > 0 {
+                            format!("Delivered {} queued message(s) via SMTP", sent_count)
+                        } else {
+                            "Outbox delivery: 0 queued messages to send".to_string()
+                        },
+                    });
+                    state.status_left = if sent_count > 0 {
+                        format!("Delivered {} queued messages", sent_count)
+                    } else {
+                        "No queued messages to send".to_string()
+                    };
                     render_active_skin(doc, state);
                     return;
                 }
@@ -6878,6 +7849,7 @@ fn build_skin_document(skin: Skin, state: &Arc<Mutex<AppState>>, next_generation
         Skin::Eudora => EUDORA_HTML,
         Skin::Email => EMAIL_HTML,
         Skin::Settings => SETTINGS_HTML,
+        Skin::Wizard => WIZARD_HTML,
     };
     let mut doc = webcore::parse_html(html);
     doc.rebuild_node_index();
@@ -6921,7 +7893,27 @@ impl BrowserGuest for AzenGuest {
 
 fn main() {
     let state = Arc::new(Mutex::new(AppState::new()));
-    let initial_doc = build_skin_document(Skin::Eudora, &state, 1);
+    let initial_skin = {
+        let mut st = state.lock().unwrap();
+        let has_primary = {
+            let email = st.conf.get("sending_mail", "email_address")
+                .or_else(|| st.conf.get("Settings", "ReturnAddress"))
+                .unwrap_or_default();
+            let server = st.conf.get("checking_mail", "pop_server")
+                .or_else(|| st.conf.get("Settings", "MailServer"))
+                .unwrap_or_default();
+            let real_accounts = st.conf.get_all_accounts();
+            let has_custom_account = real_accounts.iter().any(|a| {
+                !a.email.is_empty() && a.email != "steve@qualcomm.com" && a.email != "you@example.com"
+            });
+            has_custom_account || (!email.is_empty() && !server.is_empty() && email != "you@example.com" && email != "steve@qualcomm.com" && server != "mail.example.com")
+        };
+        if !has_primary {
+            st.wizard_modal_open = true;
+        }
+        Skin::Eudora
+    };
+    let initial_doc = build_skin_document(initial_skin, &state, 1);
     let browser_doc = BrowserDocument::new(initial_doc);
 
     let options = BrowserOptions {

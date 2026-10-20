@@ -2332,6 +2332,514 @@
     border-top: 1px solid #d7d4cf;
   }
 
+  /* Account Setup Wizard Modal */
+  .wiz-modal-dialog {
+    background: #ffffff;
+    width: 780px;
+    max-width: 95vw;
+    height: 580px;
+    max-height: 92vh;
+    border-radius: 8px;
+    box-shadow: 0 12px 36px rgba(0,0,0,0.3);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    border: 1px solid #d2cfc8;
+  }
+  .dark .wiz-modal-dialog {
+    background: #202024;
+    border-color: #32323a;
+    color: #cdc8c1;
+  }
+  .wiz-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 14px;
+    background: #f8f7f4;
+    border-bottom: 1px solid #d7d4cf;
+  }
+  .dark .wiz-modal-header {
+    background: #1a1a1d;
+    border-color: #32323a;
+  }
+  .wiz-modal-title { font-size: 11pt; font-weight: 700; color: #231e19; }
+  .dark .wiz-modal-title { color: #f0ece6; }
+  .wiz-modal-close {
+    border: none;
+    background: transparent;
+    font-size: 16px;
+    font-weight: 700;
+    cursor: pointer;
+    color: #78726c;
+  }
+  .wiz-modal-close:hover { color: #1a1612; }
+  .dark .wiz-modal-close:hover { color: #ffffff; }
+
+  /* Wizard Header Band (Displays active step title & progress) */
+  .wiz-header-band {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 18px;
+    background: linear-gradient(180deg, #ffffff 0%, #faf8f5 100%);
+    border-bottom: 1px solid #d4d0c8;
+    min-height: 48px;
+    flex-shrink: 0;
+  }
+  .dark .wiz-header-band {
+    background: linear-gradient(180deg, #242429 0%, #1c1c20 100%);
+    border-bottom-color: #32323a;
+  }
+  .wiz-header-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+  .wiz-header-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: #1e1a16;
+    letter-spacing: -0.01em;
+  }
+  .dark .wiz-header-title {
+    color: #f2eee8;
+  }
+  .wiz-header-desc {
+    font-size: 11px;
+    color: #635d55;
+    line-height: 1.35;
+  }
+  .dark .wiz-header-desc {
+    color: #9d978e;
+  }
+  .wiz-header-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+  }
+  .wiz-header-badge {
+    padding: 3px 10px;
+    border-radius: 12px;
+    background: #e9e5de;
+    color: #4a453e;
+    font-size: 10px;
+    font-weight: 600;
+    border: 1px solid #d2cdc4;
+    letter-spacing: 0.02em;
+  }
+  .dark .wiz-header-badge {
+    background: #2b2b32;
+    color: #aba59c;
+    border-color: #3a3a44;
+  }
+  .wiz-header-icon {
+    font-size: 20px;
+    opacity: 0.85;
+  }
+
+  /* Wizard Body Area */
+  .wiz-body-wrap {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .wiz-sidebar {
+    width: 136px;
+    min-width: 136px;
+    background: #ece8e2;
+    border-right: 1px solid #d4d0c8;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    padding: 14px 8px;
+    gap: 10px;
+    flex-shrink: 0;
+  }
+  .dark .wiz-sidebar {
+    background: #17171a;
+    border-color: #32323a;
+  }
+  .wiz-sidebar-img {
+    width: 120px;
+    height: 232px;
+    object-fit: contain;
+    border-radius: 4px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.18);
+    border: 1px solid rgba(0,0,0,0.1);
+    background: #ffffff;
+  }
+  .dark .wiz-sidebar-img {
+    border-color: rgba(255,255,255,0.08);
+    box-shadow: 0 2px 10px rgba(0,0,0,0.4);
+  }
+  .wiz-sidebar-caption {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: #7a746c;
+  }
+  .dark .wiz-sidebar-caption { color: #8a847b; }
+  .wiz-content-area {
+    flex: 1;
+    min-width: 0;
+    padding: 14px 20px;
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-width: none;
+    display: flex;
+    flex-direction: column;
+    box-sizing: border-box;
+  }
+  .wiz-step-pane {
+    display: none;
+    flex-direction: column;
+    flex: 1;
+    box-sizing: border-box;
+    width: 100%;
+  }
+  .wiz-step-pane.active {
+    display: flex;
+  }
+  .wiz-step-title {
+    font-size: 13pt;
+    font-weight: 700;
+    color: #231e19;
+    margin-bottom: 8px;
+  }
+  .dark .wiz-step-title { color: #f0ece6; }
+  .wiz-step-desc {
+    font-size: 11px;
+    color: #55504a;
+    line-height: 1.45;
+    margin-bottom: 12px;
+  }
+  .dark .wiz-step-desc { color: #a09a90; }
+  .wiz-field-group {
+    margin-bottom: 12px;
+    box-sizing: border-box;
+    width: 100%;
+  }
+  .wiz-field-lbl {
+    display: block;
+    font-weight: 600;
+    font-size: 11px;
+    margin-bottom: 4px;
+    color: #332e28;
+  }
+  .dark .wiz-field-lbl { color: #cdc8c1; }
+  .wiz-field-input {
+    width: 100%;
+    padding: 7px 10px;
+    border: 1px solid #c8c4bc;
+    border-radius: 4px;
+    background: #faf8f5;
+    font-size: 12px;
+    color: #231e19;
+    outline: none;
+    box-sizing: border-box;
+  }
+  .dark .wiz-field-input {
+    background: #18181b;
+    border-color: #32323a;
+    color: #cdc8c1;
+  }
+  .wiz-field-input:focus {
+    border-color: #326ea5;
+    background: #ffffff;
+    box-shadow: 0 0 0 2px rgba(50, 110, 165, 0.15);
+  }
+  .dark .wiz-field-input:focus {
+    border-color: #58a6ff;
+    background: #202025;
+    box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.15);
+  }
+  .wiz-hint {
+    font-size: 10px;
+    color: #78726c;
+    margin-top: 3px;
+    font-style: italic;
+  }
+  .dark .wiz-hint { color: #807a70; }
+
+  /* Option Cards for Step 1 */
+  .wiz-choice-card {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 12px;
+    border: 1px solid #dcd8cf;
+    border-left: 3px solid transparent;
+    border-radius: 6px;
+    background: #faf8f5;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    margin-bottom: 6px;
+    box-sizing: border-box;
+    width: 100%;
+  }
+  .dark .wiz-choice-card {
+    background: #19191d;
+    border-color: #32323a;
+  }
+  .wiz-choice-card:hover {
+    background: #f3f0e9;
+    border-color: #326ea5;
+  }
+  .dark .wiz-choice-card:hover {
+    background: #222227;
+    border-color: #58a6ff;
+  }
+  .wiz-choice-card.selected {
+    background: #eef5fc;
+    border-color: #326ea5;
+    border-left: 3px solid #326ea5;
+  }
+  .dark .wiz-choice-card.selected {
+    background: #1b2636;
+    border-color: #58a6ff;
+    border-left: 3px solid #58a6ff;
+  }
+  .wiz-choice-icon {
+    font-size: 18px;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    background: rgba(0,0,0,0.04);
+    flex-shrink: 0;
+  }
+  .dark .wiz-choice-icon {
+    background: rgba(255,255,255,0.06);
+  }
+  .wiz-choice-body {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .wiz-choice-title {
+    font-size: 11.5px;
+    font-weight: 700;
+    color: #231e19;
+  }
+  .dark .wiz-choice-title { color: #f0ece6; }
+  .wiz-choice-sub {
+    font-size: 10px;
+    color: #68625a;
+  }
+  .dark .wiz-choice-sub { color: #9c968d; }
+
+  .wiz-radio-opt {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 10px;
+    border: 1px solid #dcd8cf;
+    border-radius: 5px;
+    margin-bottom: 6px;
+    cursor: pointer;
+    background: #faf8f5;
+    font-size: 11px;
+    box-sizing: border-box;
+  }
+  .dark .wiz-radio-opt {
+    background: #18181b;
+    border-color: #32323a;
+  }
+  .wiz-radio-opt:hover {
+    border-color: #326ea5;
+  }
+
+  /* Provider Cards for Step 9 */
+  .wiz-provider-card {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 12px;
+    background: #faf8f5;
+    border: 1px solid #dcd8cf;
+    border-left: 3px solid transparent;
+    border-radius: 6px;
+    cursor: pointer;
+    user-select: none;
+    margin-bottom: 6px;
+    transition: all 0.15s ease;
+    box-sizing: border-box;
+    width: 100%;
+  }
+  .wiz-provider-card:hover {
+    background: #ffffff;
+    border-color: #326ea5;
+  }
+  .dark .wiz-provider-card {
+    background: #18181b;
+    border-color: #32323a;
+  }
+  .dark .wiz-provider-card:hover {
+    background: #202025;
+    border-color: #58a6ff;
+  }
+  .wiz-provider-card.selected {
+    background: #eef5fc;
+    border-color: #326ea5;
+    border-left: 3px solid #326ea5;
+  }
+  .dark .wiz-provider-card.selected {
+    background: #1b2636;
+    border-color: #58a6ff;
+    border-left: 3px solid #58a6ff;
+  }
+  .wiz-prov-icon {
+    font-size: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    flex-shrink: 0;
+  }
+  .wiz-prov-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .wiz-prov-title {
+    font-size: 11px;
+    font-weight: 700;
+    color: #231e19;
+  }
+  .dark .wiz-prov-title { color: #f0ece6; }
+  .wiz-prov-sub {
+    font-size: 10px;
+    color: #726c64;
+  }
+  .dark .wiz-prov-sub { color: #8e8880; }
+  .wiz-prov-badge {
+    margin-left: auto;
+    padding: 2px 7px;
+    font-size: 9.5px;
+    font-weight: 600;
+    border-radius: 4px;
+    background: #e8e4dc;
+    color: #55504a;
+    border: 1px solid #d4d0c8;
+    white-space: nowrap;
+  }
+  .dark .wiz-prov-badge {
+    background: #25252b;
+    color: #9f9990;
+    border-color: #3a3a42;
+  }
+
+  /* Callout / Tip Box */
+  .wiz-tip-box {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 9px 12px;
+    background: #fefbf0;
+    border: 1px solid #eedaa2;
+    border-radius: 6px;
+    margin-top: 8px;
+    margin-bottom: 8px;
+    font-size: 11px;
+    color: #634d19;
+    line-height: 1.45;
+  }
+  .dark .wiz-tip-box {
+    background: #232014;
+    border-color: #4a3e1b;
+    color: #ded19d;
+  }
+  .wiz-tip-icon {
+    font-size: 15px;
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+  .wiz-dark-txt { color: #1e1a16; }
+  .dark .wiz-dark-txt { color: #f2eee8; }
+  .wiz-dark-sub { color: #4a453e; }
+  .dark .wiz-dark-sub { color: #a49e94; }
+
+  /* Step 8 Summary Card */
+  .wiz-summary-card {
+    background: #fbfaf8;
+    border: 1px solid #d8d4cb;
+    border-radius: 6px;
+    padding: 12px 16px;
+    margin-top: 10px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+  }
+  .dark .wiz-summary-card {
+    background: #1a1a1e;
+    border-color: #32323a;
+  }
+  .wiz-sum-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 0;
+    border-bottom: 1px solid #ebe7df;
+    font-size: 11.5px;
+  }
+  .dark .wiz-sum-row { border-color: #26262c; }
+  .wiz-sum-row:last-child { border-bottom: none; }
+  .wiz-sum-k { font-weight: 600; color: #5a544c; }
+  .dark .wiz-sum-k { color: #a49e94; }
+  .wiz-sum-v { font-weight: 700; color: #1e1a16; }
+  .dark .wiz-sum-v { color: #f2eee8; }
+
+  /* Wizard Modal Footer */
+  .wiz-modal-footer {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 8px 14px;
+    background: #f8f7f4;
+    border-top: 1px solid #d7d4cf;
+  }
+  .dark .wiz-modal-footer {
+    background: #1a1a1d;
+    border-color: #32323a;
+  }
+  .wiz-btn {
+    padding: 5px 14px;
+    font-size: 11px;
+    font-weight: 600;
+    border-radius: 4px;
+    border: 1px solid #c8c4bc;
+    background: #faf8f5;
+    color: #231e19;
+    cursor: pointer;
+  }
+  .dark .wiz-btn {
+    background: #25252a;
+    border-color: #3a3a42;
+    color: #cdc8c1;
+  }
+  .wiz-btn:hover { background: #eeebe5; }
+  .dark .wiz-btn:hover { background: #32323a; }
+  .wiz-btn.primary {
+    background: #326ea5;
+    color: #ffffff;
+    border-color: #2b5f8f;
+  }
+  .wiz-btn.primary:hover {
+    background: #285a88;
+  }
+  .wiz-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
   /* Dark mode overrides for Calendar and Status */
   .dark #page-calendar,
   .dark .cal-modal-dialog,
@@ -2416,6 +2924,7 @@
     <button class="tbtn" data-action="print">🖨 Print</button>
     <button class="tbtn sep" data-action="find">🔍 Find</button>
     <button class="tbtn" data-open-tab="calendar">📅 Calendar</button>
+    <button class="tbtn sep" data-action="open-wizard" title="Account Setup Wizard">🧙 Wizard</button>
     <button class="tbtn sep" data-action="open-settings">⚙ Settings</button>
     <span id="tb-spacer"></span>
     <button class="tbtn sep" id="btn-skin" data-action="switch-skin" title="Switch to Email skin">🎨 Email Skin</button>
@@ -2553,6 +3062,14 @@
                   <div class="action-text">
                     <div class="action-title">Personalities</div>
                     <div class="action-desc">Manage email identities</div>
+                  </div>
+                  <div class="action-arrow">›</div>
+                </div>
+                <div class="action-card" data-action="open-wizard">
+                  <div class="action-icon action-icon-cyan">🧙</div>
+                  <div class="action-text">
+                    <div class="action-title">Account Wizard</div>
+                    <div class="action-desc">Guided account setup assistant</div>
                   </div>
                   <div class="action-arrow">›</div>
                 </div>
@@ -2947,6 +3464,364 @@
       <button class="cal-btn danger" id="cal-btn-delete" data-action="cal-delete-event" style="display:none;margin-right:auto;">🗑 Delete</button>
       <button class="cal-btn" data-action="cal-modal-close">Cancel</button>
       <button class="cal-btn primary" data-action="cal-save-event">Save Event</button>
+    </div>
+  </div>
+</div>
+
+<!-- Account Setup Wizard Modal -->
+<div class="cal-modal-overlay" id="account-wizard-modal" style="display:none;">
+  <div class="wiz-modal-dialog">
+    <!-- Header -->
+    <div class="wiz-modal-header">
+      <span class="wiz-modal-title">Account Setup Wizard</span>
+      <button class="wiz-modal-close" data-action="wiz-modal-close" title="Close Wizard">×</button>
+    </div>
+
+    <!-- Wizard Header Band (Displays active step title & progress) -->
+    <div class="wiz-header-band" id="wiz-header-band">
+      <div class="wiz-header-text">
+        <div class="wiz-header-title" id="wiz-active-title">Account Settings</div>
+        <div class="wiz-header-desc" id="wiz-active-desc">Choose how you want to configure your email account</div>
+      </div>
+      <div class="wiz-header-right">
+        <div class="wiz-header-badge" id="wiz-active-pill">Step 1</div>
+        <div class="wiz-header-icon" id="wiz-header-icon">⚙️</div>
+      </div>
+    </div>
+
+    <!-- Main Wizard Body Area -->
+    <div class="wiz-body-wrap">
+      <!-- Left Sidebar with Image -->
+      <div class="wiz-sidebar">
+        <img class="wiz-sidebar-img" id="wiz-sidebar-img" src="WizWelcome.png" alt="Eudora Wizard">
+        <div class="wiz-sidebar-caption">Eudora Mail</div>
+      </div>
+
+      <!-- Right Step Content Area -->
+      <div class="wiz-content-area">
+        <!-- Step 0: Welcome -->
+        <div class="wiz-step-pane active" id="wiz-step-0">
+          <div style="display:flex; flex-direction:column; gap:12px; padding-top:4px;">
+            <div style="font-size:16px; font-weight:700; color:#1e1a16;" class="wiz-dark-txt">
+              Welcome to the Phoenix Account Setup Wizard
+            </div>
+            <div style="font-size:12px; line-height:1.6; color:#4a453e;" class="wiz-dark-sub">
+              This wizard will assist you in configuring Phoenix to send and receive electronic mail.<br><br>
+              To complete setup, you will need your email address and password. If you are using a custom mail server, you may also need your server's incoming (POP3/IMAP) and outgoing (SMTP) hostnames.<br><br>
+              Click <b>Next</b> to begin.
+            </div>
+            <div class="wiz-tip-box" style="margin-top:14px;">
+              <span class="wiz-tip-icon">✨</span>
+              <div>
+                <b>Quick Setup:</b> You can choose <i>"Try to detect settings"</i> on the next screen for 1-click automatic setup with Gmail, Outlook, or Yahoo.
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 1: Account Settings (IDD_DIALCLIENTS) -->
+        <div class="wiz-step-pane" id="wiz-step-1">
+          <div class="wiz-step-title">Account Setup Options</div>
+          <div class="wiz-step-desc">Select how you would like to set up this account:</div>
+          <div style="display:flex; flex-direction:column; gap:6px;">
+            <label class="wiz-choice-card selected" id="wiz-card-choice-0">
+              <input type="radio" name="wiz-acct-choice" id="wiz-radio-new" value="0" checked>
+              <div class="wiz-choice-icon">⚡</div>
+              <div class="wiz-choice-body">
+                <div class="wiz-choice-title">Create a new email account</div>
+                <div class="wiz-choice-sub">Standard step-by-step setup for a new POP3 or IMAP mailbox</div>
+              </div>
+            </label>
+            <label class="wiz-choice-card" id="wiz-card-choice-2">
+              <input type="radio" name="wiz-acct-choice" id="wiz-radio-detect" value="2">
+              <div class="wiz-choice-icon">🔍</div>
+              <div class="wiz-choice-body">
+                <div class="wiz-choice-title">Try to detect settings</div>
+                <div class="wiz-choice-sub">Fast automated setup for Gmail, Microsoft Outlook, Yahoo, and standard domains</div>
+              </div>
+            </label>
+            <label class="wiz-choice-card" id="wiz-card-choice-3">
+              <input type="radio" name="wiz-acct-choice" id="wiz-radio-skip" value="3">
+              <div class="wiz-choice-icon">⚙️</div>
+              <div class="wiz-choice-body">
+                <div class="wiz-choice-title">Manual / Advanced server setup</div>
+                <div class="wiz-choice-sub">Directly specify incoming and outgoing server hostnames, ports, and SSL</div>
+              </div>
+            </label>
+            <label class="wiz-choice-card" id="wiz-card-choice-1">
+              <input type="radio" name="wiz-acct-choice" id="wiz-radio-import" value="1">
+              <div class="wiz-choice-icon">📦</div>
+              <div class="wiz-choice-body">
+                <div class="wiz-choice-title">Import settings from an existing email client</div>
+                <div class="wiz-choice-sub">Scan system for Mozilla Thunderbird, Outlook, or Eudora profile data</div>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        <!-- Step 2: Personality Name (IDD_DIALPERSNAME) -->
+        <div class="wiz-step-pane" id="wiz-step-2">
+          <div class="wiz-step-title">Personality Name</div>
+          <div class="wiz-step-desc">
+            What would you like to call this personality? Choose a descriptive name to easily distinguish it from other accounts.
+          </div>
+          <div class="wiz-field-group">
+            <label class="wiz-field-lbl" for="wiz-persname">Personality Name:</label>
+            <input class="wiz-field-input" type="text" id="wiz-persname" placeholder="My Work Account">
+            <div class="wiz-hint">(e.g. &rarr; My Work Account)</div>
+          </div>
+        </div>
+
+        <!-- Step 3: Personal Information (IDD_DIALYOURNAME) -->
+        <div class="wiz-step-pane" id="wiz-step-3">
+          <div class="wiz-step-title">Personal Information</div>
+          <div class="wiz-step-desc">
+            Please enter your name as you would like it to appear in the "From" field of your outgoing messages.
+          </div>
+          <div class="wiz-field-group">
+            <label class="wiz-field-lbl" for="wiz-yourname">Your Name:</label>
+            <input class="wiz-field-input" type="text" id="wiz-yourname" placeholder="Chris Jones">
+            <div class="wiz-hint">(e.g. &rarr; Chris Jones)</div>
+          </div>
+        </div>
+
+        <!-- Step 4: Email Address (IDD_DIALRETADD) -->
+        <div class="wiz-step-pane" id="wiz-step-4">
+          <div class="wiz-step-title">Email Address</div>
+          <div class="wiz-step-desc">
+            Please enter the email address assigned to you by your Internet Service Provider or email service.
+          </div>
+          <div class="wiz-field-group">
+            <label class="wiz-field-lbl" for="wiz-email">Email Address:</label>
+            <input class="wiz-field-input" type="text" id="wiz-email" placeholder="cjones@isp.com">
+            <div class="wiz-hint">(e.g. &rarr; cjones@isp.com)</div>
+          </div>
+        </div>
+
+        <!-- Step 5: User Name (IDD_DIALLOGIN) -->
+        <div class="wiz-step-pane" id="wiz-step-5">
+          <div class="wiz-step-title">User Name</div>
+          <div class="wiz-step-desc">
+            Please enter the user name or login name you use to log into your email server.
+          </div>
+          <div class="wiz-field-group">
+            <label class="wiz-field-lbl" for="wiz-login">User Name:</label>
+            <input class="wiz-field-input" type="text" id="wiz-login" placeholder="cjones">
+            <div class="wiz-hint">(e.g. &rarr; cjones)</div>
+          </div>
+        </div>
+
+        <!-- Step 6: Incoming Server (IDD_DIALINSERVER) -->
+        <div class="wiz-step-pane" id="wiz-step-6">
+          <div class="wiz-step-title">Incoming Email Server</div>
+          <div class="wiz-step-desc">
+            Please type in the full hostname of your incoming mail server and select its protocol.
+          </div>
+          <div style="display:grid; grid-template-columns: 2fr 1fr; gap:12px; margin-bottom:12px;">
+            <div class="wiz-field-group">
+              <label class="wiz-field-lbl" for="wiz-inserver">Incoming Server:</label>
+              <input class="wiz-field-input" type="text" id="wiz-inserver" placeholder="mail.isp.com">
+            </div>
+            <div class="wiz-field-group">
+              <label class="wiz-field-lbl" for="wiz-inport">Port:</label>
+              <input class="wiz-field-input" type="text" id="wiz-inport" placeholder="995">
+            </div>
+          </div>
+          <div style="display:flex; gap:20px; align-items:center; margin-bottom:8px;">
+            <label class="wiz-radio-opt" style="margin-bottom:0;">
+              <input type="radio" name="wiz-protocol" id="wiz-proto-pop" value="POP" checked>
+              <span>POP3</span>
+            </label>
+            <label class="wiz-radio-opt" style="margin-bottom:0;">
+              <input type="radio" name="wiz-protocol" id="wiz-proto-imap" value="IMAP">
+              <span>IMAP</span>
+            </label>
+            <label style="display:flex; align-items:center; gap:6px; font-size:11px; cursor:pointer;">
+              <input type="checkbox" id="wiz-in-ssl" checked>
+              <span>Use SSL / TLS</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Step 7: Outgoing Server (IDD_DIALOUTSERVER) -->
+        <div class="wiz-step-pane" id="wiz-step-7">
+          <div class="wiz-step-title">Outgoing Email Server</div>
+          <div class="wiz-step-desc">
+            Please type in the name of your outgoing (SMTP) mail server and authentication settings.
+          </div>
+          <div style="display:grid; grid-template-columns: 2fr 1fr; gap:12px; margin-bottom:12px;">
+            <div class="wiz-field-group">
+              <label class="wiz-field-lbl" for="wiz-outserver">Outgoing (SMTP) Server:</label>
+              <input class="wiz-field-input" type="text" id="wiz-outserver" placeholder="smtp.isp.com">
+            </div>
+            <div class="wiz-field-group">
+              <label class="wiz-field-lbl" for="wiz-outport">Port:</label>
+              <input class="wiz-field-input" type="text" id="wiz-outport" placeholder="587">
+            </div>
+          </div>
+          <div style="display:flex; gap:20px; align-items:center;">
+            <label style="display:flex; align-items:center; gap:6px; font-size:11px; cursor:pointer;">
+              <input type="checkbox" id="wiz-out-auth" checked>
+              <span>Allow authentication</span>
+            </label>
+            <label style="display:flex; align-items:center; gap:6px; font-size:11px; cursor:pointer;">
+              <input type="checkbox" id="wiz-out-ssl" checked>
+              <span>Use SSL / TLS</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Step 9: Choose Provider -->
+        <div class="wiz-step-pane" id="wiz-step-9">
+          <div class="wiz-step-title">Select Email Provider</div>
+          <div class="wiz-step-desc">
+            Choose your email service to automatically configure server hostnames, ports, and encryption:
+          </div>
+          <div style="display:flex; flex-direction:column; gap:6px;">
+            <label class="wiz-provider-card selected" id="wiz-card-prov-gmail">
+              <input type="radio" name="wiz-prov-choice" id="wiz-prov-gmail" value="gmail" checked>
+              <div class="wiz-prov-icon" style="background:#fde8e8; color:#d93025; border-radius:6px;">🔴</div>
+              <div class="wiz-prov-info">
+                <div class="wiz-prov-title">Google / Gmail</div>
+                <div class="wiz-prov-sub">@gmail.com, @googlemail.com, Google Workspace</div>
+              </div>
+              <div class="wiz-prov-badge">IMAP • TLS</div>
+            </label>
+            <label class="wiz-provider-card" id="wiz-card-prov-outlook">
+              <input type="radio" name="wiz-prov-choice" id="wiz-prov-outlook" value="outlook">
+              <div class="wiz-prov-icon" style="background:#e8f0fe; color:#1a73e8; border-radius:6px;">🔵</div>
+              <div class="wiz-prov-info">
+                <div class="wiz-prov-title">Microsoft Outlook / Hotmail</div>
+                <div class="wiz-prov-sub">@outlook.com, @hotmail.com, @live.com, Microsoft 365</div>
+              </div>
+              <div class="wiz-prov-badge">IMAP • STARTTLS</div>
+            </label>
+            <label class="wiz-provider-card" id="wiz-card-prov-yahoo">
+              <input type="radio" name="wiz-prov-choice" id="wiz-prov-yahoo" value="yahoo">
+              <div class="wiz-prov-icon" style="background:#f3e8fd; color:#7e22ce; border-radius:6px;">🟣</div>
+              <div class="wiz-prov-info">
+                <div class="wiz-prov-title">Yahoo! Mail</div>
+                <div class="wiz-prov-sub">@yahoo.com, @ymail.com (App Password recommended)</div>
+              </div>
+              <div class="wiz-prov-badge">IMAP • SSL</div>
+            </label>
+            <label class="wiz-provider-card" id="wiz-card-prov-other">
+              <input type="radio" name="wiz-prov-choice" id="wiz-prov-other" value="other">
+              <div class="wiz-prov-icon" style="background:#e8f5e9; color:#2e7d32; border-radius:6px;">🌐</div>
+              <div class="wiz-prov-info">
+                <div class="wiz-prov-title">Other Provider (Auto-detect / Custom)</div>
+                <div class="wiz-prov-sub">Custom domain, Apple iCloud, AOL, ISP, or private mail server</div>
+              </div>
+              <div class="wiz-prov-badge">POP3 / IMAP</div>
+            </label>
+          </div>
+        </div>
+
+        <!-- Step 10: Enter Credentials -->
+        <div class="wiz-step-pane" id="wiz-step-10">
+          <div class="wiz-step-title" id="wiz-cred-title">Account Credentials</div>
+          <div class="wiz-step-desc" id="wiz-cred-desc">
+            Please enter your login email and credentials. Settings will be automatically configured for your provider.
+          </div>
+          <div class="wiz-field-group">
+            <label class="wiz-field-lbl" for="wiz-cred-email">Email Address:</label>
+            <input class="wiz-field-input" type="text" id="wiz-cred-email" placeholder="username@example.com">
+            <div class="wiz-hint" id="wiz-cred-email-hint">Full email address used to log into your account</div>
+          </div>
+          <div class="wiz-field-group">
+            <label class="wiz-field-lbl" for="wiz-cred-password">Password / App Password:</label>
+            <input class="wiz-field-input" type="password" id="wiz-cred-password" placeholder="••••••••••••">
+          </div>
+          <div class="wiz-tip-box" id="wiz-cred-pwd-hint">
+            <span class="wiz-tip-icon">💡</span>
+            <div>
+              <b>Modern Security Tip:</b> Gmail, Outlook, and Yahoo require an <b>App Password</b> for standard IMAP/POP access. Generate one from your email provider account settings.
+            </div>
+          </div>
+          <div class="wiz-field-group">
+            <label class="wiz-field-lbl" for="wiz-cred-name">Your Display Name:</label>
+            <input class="wiz-field-input" type="text" id="wiz-cred-name" placeholder="First Last">
+            <div class="wiz-hint">How your name appears in outgoing emails</div>
+          </div>
+          <div style="display:flex; gap:16px; align-items:center; margin-top:4px;">
+            <label class="wiz-radio-opt" style="margin-bottom:0;">
+              <input type="radio" name="wiz-cred-proto" id="wiz-cred-proto-imap" value="IMAP" checked>
+              <span><b>IMAP</b> (Recommended - leaves mail on server)</span>
+            </label>
+            <label class="wiz-radio-opt" style="margin-bottom:0;">
+              <input type="radio" name="wiz-cred-proto" id="wiz-cred-proto-pop" value="POP">
+              <span><b>POP3</b></span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Step 11: Import Settings -->
+        <div class="wiz-step-pane" id="wiz-step-11">
+          <div class="wiz-step-title">Import Account Settings</div>
+          <div class="wiz-step-desc">
+            Scan your system for email account settings from other installed applications:
+          </div>
+          <div style="background: rgba(0,0,0,0.03); border: 1px solid #d2cfc8; border-radius: 6px; padding: 14px; margin-bottom: 12px; font-size: 11px; line-height: 1.6;">
+            <div>🔍 <b>Profile Detection Status:</b></div>
+            <div style="margin-left: 14px; color: #55504a; margin-top: 6px;" class="wiz-dark-sub">
+              • Mozilla Thunderbird: (No active profile found in standard path)<br>
+              • Microsoft Outlook / Windows Mail: (No profiles found)<br>
+              • Qualcomm Eudora: (No geudora.ini found in standard directory)
+            </div>
+            <div style="margin-top: 12px; color: #332e28;" class="wiz-dark-txt">
+              <i>Automatic profile migration will be available in an upcoming release. Click <b>Next</b> to use automatic provider detection, or click <b>Back</b> to choose another setup method.</i>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 8: Success / Confirmation (IDD_DIALFINISH) -->
+        <div class="wiz-step-pane" id="wiz-step-8">
+          <div style="display:flex; align-items:center; gap:10px; margin-bottom:8px;">
+            <div style="font-size:18px; width:28px; height:28px; border-radius:50%; background:#e6f4ea; color:#137333; display:flex; align-items:center; justify-content:center; font-weight:700;">✓</div>
+            <div>
+              <div style="font-size:14px; font-weight:700; color:#1e1a16;" class="wiz-dark-txt">Ready to Connect!</div>
+              <div style="font-size:11px; color:#5c574f;" class="wiz-dark-sub">Your email account is ready to be configured.</div>
+            </div>
+          </div>
+          <div class="wiz-step-desc" style="margin-bottom:8px;">
+            Congratulations! You have completed the setup process. Please review your settings below and click <b>Finish</b> to save and activate your account.
+          </div>
+          <div class="wiz-summary-card">
+            <div class="wiz-sum-row" id="wiz-sum-row-pers" style="display:none;">
+              <span class="wiz-sum-k">Personality:</span>
+              <span class="wiz-sum-v" id="wiz-sum-pers">(Dominant)</span>
+            </div>
+            <div class="wiz-sum-row">
+              <span class="wiz-sum-k">Your Name:</span>
+              <span class="wiz-sum-v" id="wiz-sum-name">(None)</span>
+            </div>
+            <div class="wiz-sum-row">
+              <span class="wiz-sum-k">Email Address:</span>
+              <span class="wiz-sum-v" id="wiz-sum-email">(None)</span>
+            </div>
+            <div class="wiz-sum-row">
+              <span class="wiz-sum-k">User Name:</span>
+              <span class="wiz-sum-v" id="wiz-sum-login">(None)</span>
+            </div>
+            <div class="wiz-sum-row">
+              <span class="wiz-sum-k">Incoming Server:</span>
+              <span class="wiz-sum-v" id="wiz-sum-in">(None)</span>
+            </div>
+            <div class="wiz-sum-row">
+              <span class="wiz-sum-k">Outgoing Server:</span>
+              <span class="wiz-sum-v" id="wiz-sum-out">(None)</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Wizard Modal Footer -->
+    <div class="wiz-modal-footer">
+      <button class="wiz-btn" data-action="wiz-modal-close">Cancel</button>
+      <div style="flex:1;"></div>
+      <button class="wiz-btn" data-action="wiz-back" id="wiz-btn-back" disabled>&lt; Back</button>
+      <button class="wiz-btn primary" data-action="wiz-next" id="wiz-btn-next">Next &gt;</button>
     </div>
   </div>
 </div>
