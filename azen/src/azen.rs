@@ -1,6 +1,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+mod net;
+
 use webcore::browser::{Browser, BrowserChrome, BrowserDocument, BrowserGuest, BrowserOptions};
 use webcore::dom::events::{DomEvent, ListenerOptions};
 use webcore::Document;
@@ -30,6 +32,7 @@ enum TabKind {
     Filters,
     Compose,
     Calendar,
+    TaskStatus,
 }
 
 fn mailbox_icon(name: &str) -> &'static str {
@@ -283,6 +286,7 @@ struct ComposeDraft {
     bcc: String,
     subject: String,
     attach: String,
+    attachment_paths: Vec<PathBuf>,
     priority: String,
     body_html: String,
     encoding: String,
@@ -304,6 +308,7 @@ impl Default for ComposeDraft {
             bcc: String::new(),
             subject: String::new(),
             attach: "None".to_string(),
+            attachment_paths: Vec::new(),
             priority: "Normal".to_string(),
             body_html: "<p><br></p><p><br></p><div class=\"compose-sig\">— <br>Sent with Eudora 2026</div>".to_string(),
             encoding: "MIME".to_string(),
@@ -316,6 +321,68 @@ impl Default for ComposeDraft {
         }
     }
 }
+
+fn html_to_plain_text(html: &str) -> String {
+    let mut out = String::with_capacity(html.len());
+    let mut in_tag = false;
+    let mut in_entity = false;
+    let mut entity_buf = String::with_capacity(8);
+
+    let s = html
+        .replace("<br>", "\n")
+        .replace("<br/>", "\n")
+        .replace("<br />", "\n")
+        .replace("</p>", "\n\n")
+        .replace("</div>", "\n");
+
+    for ch in s.chars() {
+        if ch == '<' {
+            in_tag = true;
+            continue;
+        }
+        if ch == '>' {
+            in_tag = false;
+            continue;
+        }
+        if in_tag {
+            continue;
+        }
+        if ch == '&' {
+            in_entity = true;
+            entity_buf.clear();
+            continue;
+        }
+        if in_entity {
+            if ch == ';' {
+                in_entity = false;
+                match entity_buf.as_str() {
+                    "nbsp" => out.push(' '),
+                    "amp" => out.push('&'),
+                    "lt" => out.push('<'),
+                    "gt" => out.push('>'),
+                    "quot" => out.push('"'),
+                    "apos" | "#39" => out.push('\''),
+                    _ => {
+                        out.push('&');
+                        out.push_str(&entity_buf);
+                        out.push(';');
+                    }
+                }
+            } else if entity_buf.len() < 10 {
+                entity_buf.push(ch);
+            } else {
+                in_entity = false;
+                out.push('&');
+                out.push_str(&entity_buf);
+                out.push(ch);
+            }
+            continue;
+        }
+        out.push(ch);
+    }
+    out.trim().to_string()
+}
+
 
 struct AppState {
     skin: Skin,
@@ -804,7 +871,7 @@ fn load_macmbx_data(
                 let mut labels = Vec::new();
                 let lbl_idx = macmbx::ops::get_label(&toc, i);
                 if (1..=7).contains(&lbl_idx) {
-                    if let Some(def) = label_defs.get(lbl_idx - 1) {
+                    if let Some(def) = label_defs.get((lbl_idx - 1) as usize) {
                         labels.push(def.name.clone());
                     }
                 }
@@ -987,7 +1054,7 @@ fn load_macmbx_data(
 impl AppState {
     fn new() -> Self {
         let data_dir = resolve_data_dir();
-        seed_store_if_needed(&data_dir);
+        ensure_standard_mailboxes(&data_dir);
         let conf = macmbx::conf::Conf::load(data_dir.join("geudora.ini"))
             .unwrap_or_else(|_| macmbx::conf::Conf::new());
 
@@ -1007,438 +1074,15 @@ impl AppState {
 
         let (store, mailboxes, messages, contacts, filters) = load_macmbx_data(&data_dir, &conf);
 
-        let labels = vec![
-            LabelDef { name: "Work",     color: "#5b5fc7", bg_rgba: "rgba(91,95,199,0.15)" },
-            LabelDef { name: "Personal", color: "#27ae60", bg_rgba: "rgba(39,174,96,0.15)" },
-            LabelDef { name: "Urgent",   color: "#e74c3c", bg_rgba: "rgba(231,76,60,0.15)" },
-            LabelDef { name: "Finance",  color: "#f39c12", bg_rgba: "rgba(243,156,18,0.15)" },
-            LabelDef { name: "Dev",      color: "#3498db", bg_rgba: "rgba(52,152,219,0.15)" },
-            LabelDef { name: "Design",   color: "#9b59b6", bg_rgba: "rgba(155,89,182,0.15)" },
-            LabelDef { name: "Team",     color: "#1abc9c", bg_rgba: "rgba(26,188,156,0.15)" },
-        ];
+        let labels = load_labels_from_conf(&conf);
 
-        let _unused_messages = vec![
-            MailMessage {
-                id: 1,
-                mailbox: "In".to_string(),
-                from: "Steve Dorner <sdorner@qualcomm.com>".to_string(),
-                to: "you@example.com".to_string(),
-                cc: "eudora-team@qualcomm.com".to_string(),
-                subject: "Welcome to Eudora 2026!".to_string(),
-                date: "Mar 7, 2026  9:15 AM".to_string(),
-                short_date: "9:15 AM".to_string(),
-                size: "8K".to_string(),
-                preview: "Welcome to the all-new Eudora! Built from the ground up with a modern HTML/CSS rendering engine...".to_string(),
-                body_html: r#"<h3 style="color:#326ea5;margin-top:0">Welcome to the all-new Eudora!</h3>
-<p>We've rebuilt the classic email client you loved from the ground up, powered by a modern HTML/CSS rendering engine.</p>
-<p><b>What's new in Eudora 2026:</b></p>
-<ul>
-  <li><b>Rich HTML Email</b> — Full CSS styling, tables, and embedded images</li>
-  <li><b>Wazoo Panels</b> — Dockable tabbed mailbox &amp; tool panels</li>
-  <li><b>Lightning Filter Engine</b> — 100× faster rule processing</li>
-  <li><b>Address Book</b> — Integrated contact management with quick-search</li>
-  <li><b>Dark Mode</b> — Easy on the eyes for late-night email sessions</li>
-</ul>
-<p>As I always said: <i>"Bringing Mail to the Masses."</i></p>
-<p>Best regards,<br><b>Steve Dorner</b><br><span style="font-size:9pt;opacity:0.6">Creator of Eudora • Qualcomm Inc.</span></p>"#.to_string(),
-                unread: true,
-                replied: false,
-                forwarded: false,
-                has_attach: true,
-                attachment_note: "📎 Eudora_2026_QuickStart.pdf (412 KB)".to_string(),
-                priority: "highest",
-                flagged: true,
-                avatar_initials: "SD".to_string(),
-                avatar_color: "#326ea5",
-                labels: vec!["Work", "Urgent"],
-            },
-            MailMessage {
-                id: 2,
-                mailbox: "In".to_string(),
-                from: "Alan Strider <astrider@example.com>".to_string(),
-                to: "you@example.com".to_string(),
-                cc: "finance@example.com".to_string(),
-                subject: "Q1 Financial Report - Action Required".to_string(),
-                date: "Mar 7, 2026  8:42 AM".to_string(),
-                short_date: "8:42 AM".to_string(),
-                size: "24K".to_string(),
-                preview: "Please find the Q1 2026 summary below. Total revenue reached $4.2M (+15% QoQ)...".to_string(),
-                body_html: r#"<p>Hi,</p>
-<p>Please find the Q1 2026 summary below:</p>
-<table style="width:100%;border-collapse:collapse;margin:12px 0;font-size:9.5pt;">
-  <tr style="background:#326ea5;color:white;">
-    <th style="padding:6px 10px;text-align:left;">Metric</th>
-    <th style="padding:6px 10px;text-align:right;">Q1 2026</th>
-    <th style="padding:6px 10px;text-align:right;">Q4 2025</th>
-    <th style="padding:6px 10px;text-align:right;">Change</th>
-  </tr>
-  <tr>
-    <td style="padding:5px 10px;border-bottom:1px solid #ddd;">Revenue</td>
-    <td style="padding:5px 10px;text-align:right;border-bottom:1px solid #ddd;"><b>$4.2M</b></td>
-    <td style="padding:5px 10px;text-align:right;border-bottom:1px solid #ddd;">$3.65M</td>
-    <td style="padding:5px 10px;text-align:right;color:#2ea043;border-bottom:1px solid #ddd;">+15.1%</td>
-  </tr>
-  <tr>
-    <td style="padding:5px 10px;border-bottom:1px solid #ddd;">Operating Costs</td>
-    <td style="padding:5px 10px;text-align:right;border-bottom:1px solid #ddd;">$2.8M</td>
-    <td style="padding:5px 10px;text-align:right;border-bottom:1px solid #ddd;">$2.9M</td>
-    <td style="padding:5px 10px;text-align:right;color:#2ea043;border-bottom:1px solid #ddd;">-3.4%</td>
-  </tr>
-  <tr>
-    <td style="padding:5px 10px;">Net Profit</td>
-    <td style="padding:5px 10px;text-align:right;"><b>$1.4M</b></td>
-    <td style="padding:5px 10px;text-align:right;">$750K</td>
-    <td style="padding:5px 10px;text-align:right;color:#2ea043;"><b>+86.7%</b></td>
-  </tr>
-</table>
-<p>Please sign off by Friday EOD.</p>
-<p>Thanks,<br>Alan</p>"#.to_string(),
-                unread: true,
-                replied: false,
-                forwarded: false,
-                has_attach: true,
-                attachment_note: "📎 Q1_2026_Financials.xlsx (24 KB)".to_string(),
-                priority: "high",
-                flagged: true,
-                avatar_initials: "AS".to_string(),
-                avatar_color: "#2ea043",
-                labels: vec!["Finance", "Urgent"],
-            },
-            MailMessage {
-                id: 3,
-                mailbox: "In".to_string(),
-                from: "Lisa Warren <lwarren@design.example>".to_string(),
-                to: "you@example.com, design-team@example.com".to_string(),
-                cc: "".to_string(),
-                subject: "📅 Invite: Design Review — Mobile Nav".to_string(),
-                date: "Mar 6, 2026  4:30 PM".to_string(),
-                short_date: "Yesterday".to_string(),
-                size: "12K".to_string(),
-                preview: "Calendar Invitation: Design Review — Mobile Navigation. Monday, March 10, 2026 at 2:00 PM PST...".to_string(),
-                body_html: r#"<div class="cal-card">
-  <div class="cal-header">
-    <div class="cal-label">Calendar Invitation</div>
-    <div class="cal-title">Design Review — Mobile Navigation</div>
-  </div>
-  <div class="cal-body">
-    <table class="cal-table">
-      <tr>
-        <td class="cal-field">When</td>
-        <td><b>Monday, March 10, 2026</b><br>2:00 PM – 3:00 PM PST</td>
-      </tr>
-      <tr>
-        <td class="cal-field">Where</td>
-        <td>Conference Room B / <span style="color:#326ea5;text-decoration:underline">Zoom Link</span></td>
-      </tr>
-      <tr>
-        <td class="cal-field">Organizer</td>
-        <td>Lisa Warren &lt;lwarren@design.example&gt;</td>
-      </tr>
-    </table>
-    <div class="cal-agenda">
-      <div class="cal-agenda-label">Agenda</div>
-      <ol>
-        <li>Review updated wireframes for bottom tab bar</li>
-        <li>Discuss gesture navigation prototype results</li>
-        <li>Finalize icon set and micro-interactions</li>
-      </ol>
-    </div>
-    <div class="cal-rsvp">
-      <div class="cal-rsvp-btn"><div class="cal-rsvp-inner accept">✓ Accept</div></div>
-      <div class="cal-rsvp-btn"><div class="cal-rsvp-inner tentative">? Tentative</div></div>
-      <div class="cal-rsvp-btn"><div class="cal-rsvp-inner decline">✗ Decline</div></div>
-    </div>
-  </div>
-</div>
-<p style="font-size:9.5pt;opacity:0.7">Hi everyone — please review the Figma mocks before the meeting. Looking forward to your feedback!</p>"#.to_string(),
-                unread: true,
-                replied: false,
-                forwarded: false,
-                has_attach: true,
-                attachment_note: "📎 invite.ics (4 KB)".to_string(),
-                priority: "normal",
-                flagged: true,
-                avatar_initials: "LW".to_string(),
-                avatar_color: "#d2372d",
-                labels: vec!["Design", "Team"],
-            },
-            MailMessage {
-                id: 4,
-                mailbox: "In".to_string(),
-                from: "GitHub <notifications@github.com>".to_string(),
-                to: "you@example.com".to_string(),
-                cc: "".to_string(),
-                subject: "[litehtml/litehtml] PR #482: Add CSS Grid support".to_string(),
-                date: "Mar 6, 2026  2:30 PM".to_string(),
-                short_date: "Yesterday".to_string(),
-                size: "6K".to_string(),
-                preview: "@contributor merged 14 commits into master from feat-grid: grid-template-columns, fr units, gap...".to_string(),
-                body_html: r#"<p><b>@contributor</b> merged 14 commits into <code>master</code> from <code>feat-grid</code>.</p>
-<p>Changes:</p>
-<ul>
-  <li><code>grid-template-columns</code> and <code>grid-template-rows</code></li>
-  <li><code>fr</code> units and <code>minmax()</code></li>
-  <li><code>grid-gap</code> / <code>gap</code> shorthand</li>
-  <li>Auto-placement algorithm</li>
-</ul>
-<p style="font-size:9pt;color:#666;">—<br>View it on GitHub or unsubscribe.</p>"#.to_string(),
-                unread: false,
-                replied: true,
-                forwarded: false,
-                has_attach: false,
-                attachment_note: String::new(),
-                priority: "normal",
-                flagged: false,
-                avatar_initials: "GH".to_string(),
-                avatar_color: "#24292f",
-                labels: vec!["Dev"],
-            },
-            MailMessage {
-                id: 5,
-                mailbox: "In".to_string(),
-                from: "Dana Park <dpark@example.com>".to_string(),
-                to: "you@example.com".to_string(),
-                cc: "speakers@conf2026.example".to_string(),
-                subject: "Conference talk proposal accepted!".to_string(),
-                date: "Mar 5, 2026  11:20 AM".to_string(),
-                short_date: "Mar 5".to_string(),
-                size: "5K".to_string(),
-                preview: "Great news! Our talk 'Rendering HTML Email in 2026: Lessons from Eudora' was accepted...".to_string(),
-                body_html: r#"<p>Great news!</p>
-<p>Our talk <b>"Rendering HTML Email in 2026: Lessons from Eudora"</b> was accepted for the main track!</p>
-<p>Slot: <b>April 18, 2:00 PM — Hall B</b></p>
-<p>Let's sync this week to outline the slides.</p>
-<p>— Dana</p>"#.to_string(),
-                unread: false,
-                replied: true,
-                forwarded: true,
-                has_attach: false,
-                attachment_note: String::new(),
-                priority: "normal",
-                flagged: true,
-                avatar_initials: "DP".to_string(),
-                avatar_color: "#9b32a5",
-                labels: vec!["Work", "Design"],
-            },
-            MailMessage {
-                id: 6,
-                mailbox: "In".to_string(),
-                from: "Rust Weekly <newsletter@rustweekly.example>".to_string(),
-                to: "subscribers@rustweekly.example".to_string(),
-                cc: "".to_string(),
-                subject: "This Week in Rust #642".to_string(),
-                date: "Mar 4, 2026  7:00 AM".to_string(),
-                short_date: "Mar 4".to_string(),
-                size: "18K".to_string(),
-                preview: "Highlights: Rust 1.86 released, zero-cost abstractions in UI toolkits, crate of the week...".to_string(),
-                body_html: r#"<h3>This Week in Rust #642</h3>
-<p>Hello and welcome to another issue of <i>This Week in Rust</i>!</p>
-<ul>
-  <li><b>Official:</b> Rust 1.86.0 release notes</li>
-  <li><b>Project/Tooling:</b> Fast HTML/CSS layout engines in pure Rust</li>
-  <li><b>Crate of the Week:</b> <code>webcore</code> — lightweight embeddable browser engine</li>
-</ul>"#.to_string(),
-                unread: false,
-                replied: false,
-                forwarded: false,
-                has_attach: false,
-                attachment_note: String::new(),
-                priority: "low",
-                flagged: false,
-                avatar_initials: "RW".to_string(),
-                avatar_color: "#d35400",
-                labels: vec!["Dev"],
-            },
-            MailMessage {
-                id: 7,
-                mailbox: "In".to_string(),
-                from: "Rick Langley <rick@example.com>".to_string(),
-                to: "you@example.com".to_string(),
-                cc: "".to_string(),
-                subject: "Lunch Friday?".to_string(),
-                date: "Mar 2, 2026  1:12 PM".to_string(),
-                short_date: "Mar 2".to_string(),
-                size: "1K".to_string(),
-                preview: "Hey, want to grab lunch Friday? Thinking that new ramen place on 5th...".to_string(),
-                body_html: r#"<p>Hey, want to grab lunch Friday? Thinking that new ramen place on 5th.</p>
-<p>Let me know!</p><p>Rick</p>"#.to_string(),
-                unread: false,
-                replied: false,
-                forwarded: false,
-                has_attach: false,
-                attachment_note: String::new(),
-                priority: "none",
-                flagged: false,
-                avatar_initials: "RL".to_string(),
-                avatar_color: "#d29922",
-                labels: vec!["Personal"],
-            },
-            // Outbox messages
-            MailMessage {
-                id: 101,
-                mailbox: "Out".to_string(),
-                from: "you@example.com".to_string(),
-                to: "Steve Dorner <sdorner@qualcomm.com>".to_string(),
-                cc: "".to_string(),
-                subject: "Re: Welcome to Eudora 2026!".to_string(),
-                date: "Mar 7, 2026  10:45 AM".to_string(),
-                short_date: "10:45 AM".to_string(),
-                size: "3K".to_string(),
-                preview: "Thanks Steve! The new version is amazing. Quick questions: Can I import old mailboxes?...".to_string(),
-                body_html: r#"<p>Thanks Steve! The new version is amazing.</p>
-<p>Quick questions:</p>
-<ol>
-  <li>Can I import old mailboxes?</li>
-  <li>CalDAV support?</li>
-</ol>"#.to_string(),
-                unread: false,
-                replied: false,
-                forwarded: false,
-                has_attach: false,
-                attachment_note: String::new(),
-                priority: "normal",
-                flagged: false,
-                avatar_initials: "SD".to_string(),
-                avatar_color: "#326ea5",
-                labels: vec!["Work"],
-            },
-            MailMessage {
-                id: 102,
-                mailbox: "Out".to_string(),
-                from: "you@example.com".to_string(),
-                to: "team@example.com".to_string(),
-                cc: "astrider@example.com".to_string(),
-                subject: "Dashboard redesign - timeline update".to_string(),
-                date: "Mar 6, 2026  3:00 PM".to_string(),
-                short_date: "Yesterday".to_string(),
-                size: "2K".to_string(),
-                preview: "Hi team, Running behind on the dashboard redesign. Pushing milestone to next Friday...".to_string(),
-                body_html: r#"<p>Hi team,</p>
-<p>Running behind on the dashboard redesign. Pushing milestone to next Friday.</p>"#.to_string(),
-                unread: false,
-                replied: false,
-                forwarded: false,
-                has_attach: false,
-                attachment_note: String::new(),
-                priority: "normal",
-                flagged: false,
-                avatar_initials: "TM".to_string(),
-                avatar_color: "#1abc9c",
-                labels: vec!["Team", "Work"],
-            },
-            MailMessage {
-                id: 103,
-                mailbox: "Out".to_string(),
-                from: "you@example.com".to_string(),
-                to: "Dana Park <dpark@example.com>".to_string(),
-                cc: "".to_string(),
-                subject: "Re: Conference talk proposal".to_string(),
-                date: "Mar 5, 2026  2:15 PM".to_string(),
-                short_date: "Mar 5".to_string(),
-                size: "2K".to_string(),
-                preview: "Fantastic news, Dana! Outline ideas: 1. History of desktop email clients 2. Modern rendering...".to_string(),
-                body_html: r#"<p>Fantastic news, Dana!</p>
-<p>Outline ideas:</p>
-<ol>
-  <li>History of desktop email clients</li>
-  <li>Modern rendering challenges</li>
-  <li>Live demo</li>
-</ol>"#.to_string(),
-                unread: false,
-                replied: false,
-                forwarded: false,
-                has_attach: false,
-                attachment_note: String::new(),
-                priority: "none",
-                flagged: false,
-                avatar_initials: "DP".to_string(),
-                avatar_color: "#9b32a5",
-                labels: vec!["Work"],
-            },
-            // Drafts
-            MailMessage {
-                id: 201,
-                mailbox: "Drafts".to_string(),
-                from: "you@example.com".to_string(),
-                to: "jbeckley@qualcomm.com".to_string(),
-                cc: "".to_string(),
-                subject: "[Draft] Toolbar icon measurements".to_string(),
-                date: "Mar 7, 2026  11:00 AM".to_string(),
-                short_date: "11:00 AM".to_string(),
-                size: "2K".to_string(),
-                preview: "Hi Jeff, Here are the updated measurements for the Wazoo sidebar and toolbar buttons...".to_string(),
-                body_html: r#"<p>Hi Jeff,</p><p>Here are the updated measurements for the Wazoo sidebar and toolbar buttons.</p>"#.to_string(),
-                unread: true,
-                replied: false,
-                forwarded: false,
-                has_attach: false,
-                attachment_note: String::new(),
-                priority: "normal",
-                flagged: false,
-                avatar_initials: "JB".to_string(),
-                avatar_color: "#a55532",
-                labels: vec!["Work", "Design"],
-            },
-            // Spam
-            MailMessage {
-                id: 301,
-                mailbox: "Spam".to_string(),
-                from: "Prize Desk <winner@lottery-example.org>".to_string(),
-                to: "you@example.com".to_string(),
-                cc: "".to_string(),
-                subject: "CONGRATULATIONS! You won a free cruise!".to_string(),
-                date: "Mar 3, 2026  3:11 AM".to_string(),
-                short_date: "Mar 3".to_string(),
-                size: "4K".to_string(),
-                preview: "Click here immediately to claim your luxury Bahamas cruise reward...".to_string(),
-                body_html: r#"<p><b>Filtered by Eudora Spam Keywords Rule.</b></p><p>Click here immediately to claim your luxury Bahamas cruise reward.</p>"#.to_string(),
-                unread: true,
-                replied: false,
-                forwarded: false,
-                has_attach: false,
-                attachment_note: String::new(),
-                priority: "low",
-                flagged: false,
-                avatar_initials: "PD".to_string(),
-                avatar_color: "#7f8c8d",
-                labels: vec![],
-            },
-            // Work
-            MailMessage {
-                id: 401,
-                mailbox: "Work".to_string(),
-                from: "Bob Chen <bchen@example.com>".to_string(),
-                to: "you@example.com".to_string(),
-                cc: "".to_string(),
-                subject: "Production deployment checklist".to_string(),
-                date: "Mar 4, 2026  5:10 PM".to_string(),
-                short_date: "Mar 4".to_string(),
-                size: "7K".to_string(),
-                preview: "All staging checks passed. Ready for the rollout window tonight at 19:00 UTC...".to_string(),
-                body_html: r#"<p>Hi,</p><p>All staging checks passed. Ready for the rollout window tonight at 19:00 UTC.</p><p>— Bob</p>"#.to_string(),
-                unread: true,
-                replied: false,
-                forwarded: false,
-                has_attach: false,
-                attachment_note: String::new(),
-                priority: "high",
-                flagged: false,
-                avatar_initials: "BC".to_string(),
-                avatar_color: "#32a582",
-                labels: vec!["Work", "Dev"],
-            },
-        ];
-        let _ = _unused_messages;
-
-        let selected_in_msg_id = messages.iter().find(|m| m.mailbox == "In").map(|m| m.id).unwrap_or(1);
-        let selected_out_msg_id = messages.iter().find(|m| m.mailbox == "Out").map(|m| m.id).unwrap_or(1);
+        let selected_in_msg_id = messages.iter().find(|m| m.mailbox == "In").map(|m| m.id).unwrap_or(0);
+        let selected_out_msg_id = messages.iter().find(|m| m.mailbox == "Out").map(|m| m.id).unwrap_or(0);
 
         let in_unread = messages.iter().filter(|m| m.mailbox == "In" && m.unread).count();
         let in_total = messages.iter().filter(|m| m.mailbox == "In").count();
 
-        let mut expanded_folders = std::collections::HashSet::new();
-        expanded_folders.insert("Work".to_string());
-        expanded_folders.insert("Personal".to_string());
+        let expanded_folders = std::collections::HashSet::new();
 
         let open_tabs = vec![
             TabKind::Welcome,
@@ -1620,31 +1264,128 @@ impl AppState {
         self.dirty = true;
     }
 
-    fn send_composed_message(&mut self) {
+    fn user_identity(&self) -> String {
+        get_user_identity_from_conf(&self.conf)
+    }
+
+    fn queued_count_in_outbox(&self) -> usize {
+        let out_path = self.data_dir.join("mailboxes").join("Out");
+        if let Ok(toc) = macmbx::toc::Toc::open_or_create(&out_path) {
+            toc.msgs
+                .iter()
+                .filter(|m| {
+                    m.state == macmbx::toc::State::Queued
+                        && !m.flags.contains(macmbx::toc::MsgFlags::DELETED)
+                })
+                .count()
+        } else {
+            0
+        }
+    }
+
+    fn queue_composed_message(&mut self) -> Result<usize, String> {
         let from = if self.compose.from.is_empty() {
-            self.conf.get("Settings", "ReturnAddress").unwrap_or("you@example.com").to_string()
+            self.user_identity()
         } else {
             self.compose.from.clone()
         };
         let to = self.compose.to.clone();
         let cc = self.compose.cc.clone();
+        let bcc = self.compose.bcc.clone();
         let subject = if self.compose.subject.is_empty() {
             "(No Subject)".to_string()
         } else {
             self.compose.subject.clone()
         };
         let body = self.compose.body_html.clone();
+        let body_plain = html_to_plain_text(&body);
 
-        let raw = format!(
-            "From: {}\r\nTo: {}\r\nCc: {}\r\nSubject: {}\r\nDate: {}\r\nContent-Type: text/html; charset=utf-8\r\n\r\n{}\r\n",
-            from, to, cc, subject, "Sat, 7 Mar 2026 12:00:00 -0800", body
-        );
+        let mut attachments = Vec::new();
+        for p in &self.compose.attachment_paths {
+            if let Ok(data) = std::fs::read(p) {
+                let filename = p
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("attachment")
+                    .to_string();
+                let mime = crispy::msg::mime_type(&filename).to_string();
+                attachments.push(crispy::msg::Attachment {
+                    path: Some(p.to_string_lossy().to_string()),
+                    filename: Some(filename),
+                    mime_type: Some(mime),
+                    data: Some(data),
+                    is_inline: false,
+                    content_id: None,
+                });
+            }
+        }
+
+        let prio: u8 = match self.compose.priority.as_str() {
+            "Highest" => 1,
+            "High" => 2,
+            "Normal" => 3,
+            "Low" => 4,
+            "Lowest" => 5,
+            _ => 3,
+        };
+
+        let msg = crispy::msg::Message {
+            from: from.clone(),
+            to: to.clone(),
+            cc: if cc.trim().is_empty() {
+                None
+            } else {
+                Some(cc.clone())
+            },
+            bcc: if bcc.trim().is_empty() {
+                None
+            } else {
+                Some(bcc)
+            },
+            reply_to: None,
+            subject: subject.clone(),
+            body_plain: Some(body_plain),
+            body_html: Some(body.clone()),
+            attachments,
+            priority: prio,
+            x_mailer: Some("Eudora (Azen)".to_string()),
+            tz_offset: 0,
+            ..Default::default()
+        };
+
+        let raw_bytes = match msg.build() {
+            Some(s) => s.into_bytes(),
+            None => {
+                let now_ts = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() as i64;
+                let date_str = macmbx::calendar::format_rfc2822(now_ts);
+                format!(
+                    "From: {}\r\nTo: {}\r\nCc: {}\r\nSubject: {}\r\nDate: {}\r\nContent-Type: text/html; charset=utf-8\r\n\r\n{}\r\n",
+                    from, to, cc, subject, date_str, body
+                )
+                .into_bytes()
+            }
+        };
 
         let out_path = self.data_dir.join("mailboxes").join("Out");
-        if let Ok(mut out_toc) = macmbx::toc::Toc::open_or_create(&out_path) {
-            let _ = macmbx::ops::append_message(&mut out_toc, raw.as_bytes(), &from, macmbx::toc::State::Queued, 3);
-            let _ = out_toc.save();
-        }
+        let mut out_toc = macmbx::toc::Toc::open_or_create(&out_path)
+            .map_err(|e| format!("Cannot open Out mailbox: {}", e))?;
+        let idx = macmbx::ops::append_message(
+            &mut out_toc,
+            &raw_bytes,
+            &from,
+            macmbx::toc::State::Queued,
+            3,
+        )
+        .map_err(|e| format!("Cannot append to Out mailbox: {}", e))?;
+        let _ = out_toc.save();
+
+        self.status_logs.push(StatusLog {
+            time: current_clock_str(),
+            message: format!("Queued outgoing message to {}: \"{}\"", to, subject),
+        });
 
         self.reload_from_disk();
         self.compose = ComposeDraft::default();
@@ -1652,8 +1393,112 @@ impl AppState {
         self.close_tab_if_open(&TabKind::Compose);
         self.open_tab(TabKind::Mailbox("Out".to_string()));
         self.email_mode = EmailViewMode::Mail;
-        self.status_left = "Message queued in Out mailbox".to_string();
         self.dirty = true;
+
+        Ok(idx)
+    }
+
+    fn send_composed_message(&mut self) {
+        let _ = self.queue_composed_message();
+    }
+
+    fn send_queued_mail_bg(state_arc: Arc<Mutex<AppState>>) {
+        std::thread::spawn(move || {
+            let (conf, data_dir) = {
+                let st = state_arc.lock().unwrap();
+                (st.conf.clone(), st.data_dir.clone())
+            };
+            let mailer = crate::net::create_mailer(&conf, &data_dir);
+            let result = mailer.send();
+            let mut st = state_arc.lock().unwrap();
+            st.reload_from_disk();
+            match result {
+                Ok(n) if n > 0 => {
+                    let msg = format!("✓ Delivered {} queued message(s) via SMTP", n);
+                    st.status_logs.push(StatusLog {
+                        time: current_clock_str(),
+                        message: msg.clone(),
+                    });
+                    st.status_left = msg;
+                }
+                Ok(_) => {
+                    let msg = "Outbox delivery: 0 messages sent".to_string();
+                    st.status_logs.push(StatusLog {
+                        time: current_clock_str(),
+                        message: msg.clone(),
+                    });
+                    st.status_left = "No queued messages to send".to_string();
+                }
+                Err(e) => {
+                    let msg = format!("✗ SMTP Send failed: {}", e);
+                    st.status_logs.push(StatusLog {
+                        time: current_clock_str(),
+                        message: msg.clone(),
+                    });
+                    st.status_left = format!("SMTP Send failed: {}", e);
+                }
+            }
+            st.dirty = true;
+        });
+    }
+
+    fn check_mail_bg(state_arc: Arc<Mutex<AppState>>) {
+        std::thread::spawn(move || {
+            let (conf, data_dir) = {
+                let st = state_arc.lock().unwrap();
+                (st.conf.clone(), st.data_dir.clone())
+            };
+            let srv = conf
+                .get("checking_mail", "pop_server")
+                .or_else(|| conf.get("Settings", "MailServer"))
+                .unwrap_or_default();
+            if srv.is_empty() || srv == "mail.example.com" {
+                let mut st = state_arc.lock().unwrap();
+                let msg = "Mail check: No incoming server configured in Settings".to_string();
+                st.status_logs.push(StatusLog {
+                    time: current_clock_str(),
+                    message: msg,
+                });
+                st.status_left = "No mail server configured".to_string();
+                st.dirty = true;
+                return;
+            }
+
+            let mailer = crate::net::create_mailer(&conf, &data_dir);
+            let result = mailer.check();
+            let mut st = state_arc.lock().unwrap();
+            st.reload_from_disk();
+            match result {
+                Ok(n) if n > 0 => {
+                    let msg = format!(
+                        "✓ Mail check complete on {}: {} new message(s) received",
+                        srv, n
+                    );
+                    st.status_logs.push(StatusLog {
+                        time: current_clock_str(),
+                        message: msg.clone(),
+                    });
+                    st.status_left = format!("{} new message(s)", n);
+                }
+                Ok(_) => {
+                    let msg = format!("Mail check complete on {}: No new messages", srv);
+                    st.status_logs.push(StatusLog {
+                        time: current_clock_str(),
+                        message: msg,
+                    });
+                    st.status_left = "No new mail".to_string();
+                }
+                Err(e) => {
+                    let msg = format!("✗ Mail check failed on {}: {}", srv, e);
+                    st.status_logs.push(StatusLog {
+                        time: current_clock_str(),
+                        message: msg.clone(),
+                    });
+                    st.status_left = format!("Mail check failed: {}", e);
+                }
+            }
+            st.dirty = true;
+        });
     }
 
     fn trash_message(&mut self, msg_id: usize) {
@@ -1862,6 +1707,12 @@ impl AppState {
                 self.status_left = format!("Calendar — {} events on {}-{:02}-{:02} ({})", ev_count, y, m, d, self.cal_view_mode);
                 self.status_center = if has_caldav { "CalDAV Synced".to_string() } else { "Local Calendar".to_string() };
                 self.status_right = "phoenix.db".to_string();
+            }
+            TabKind::TaskStatus => {
+                let queued = self.messages.iter().filter(|m| m.mailbox == "Out" && m.unread).count();
+                self.status_left = format!("Task Status — {} events logged, {} queued in Out", self.status_logs.len(), queued);
+                self.status_center = proto_status;
+                self.status_right = srv_label;
             }
         }
     }
@@ -2547,6 +2398,7 @@ fn render_eudora_all(doc: &mut Document, state: &mut AppState) {
     render_eudora_filters(doc, state);
     render_eudora_compose(doc, state);
     render_eudora_calendar(doc, state);
+    render_eudora_task_status(doc, state);
     render_eudora_cal_modal(doc, state);
     render_eudora_wizard_modal(doc, state);
     render_eudora_context_menu(doc, state);
@@ -2883,7 +2735,13 @@ fn render_eudora_wazoo(doc: &mut Document, state: &AppState) {
             html.push_str("</div>");
         }
         WazooTab::Status => {
-            html.push_str(r#"<div class="sidebar-status"><div class="status-sec-hdr">Active Tasks &amp; Sync</div>"#);
+            html.push_str(
+                r#"<div class="sidebar-status">
+                    <div class="status-sec-hdr" style="display:flex;justify-content:space-between;align-items:center;">
+                        <span>Active Tasks &amp; Sync</span>
+                        <button class="mini-cal-btn" data-action="open-full-status" title="Open Full Task Status &amp; Log Window">↗</button>
+                    </div>"#
+            );
             let tasks = state.compute_status_tasks();
             for task in &tasks {
                 let pct = (task.progress * 100.0).clamp(0.0, 100.0);
@@ -2908,49 +2766,92 @@ fn render_eudora_wazoo(doc: &mut Document, state: &AppState) {
                     <button class="status-act-btn" data-action="check-mail">⚡ Check</button>
                     <button class="status-act-btn" data-action="send-queued">📤 Send</button>
                     <button class="status-act-btn" data-action="status-clear-log">🧹 Clear</button>
+                    <button class="status-act-btn primary" data-action="open-full-status" title="Open Full Activity Log Tab">↗ Full</button>
                 </div>
-                <div class="status-sec-hdr" style="margin-top:6px;">Activity Log</div>
+                <div class="status-sec-hdr" style="margin-top:6px;display:flex;justify-content:space-between;align-items:center;">
+                    <span>Activity Log</span>
+                    <span style="font-size:7pt;color:#6d675e;cursor:pointer;" data-action="open-full-status">↗ Expand</span>
+                </div>
                 <div class="status-log-wrap">"#
             );
 
             for log in state.status_logs.iter().rev() {
                 html.push_str(&format!(
-                    r#"<div class="status-log-entry"><span class="status-log-time">[{time}]</span>{msg}</div>"#,
-                    time = escape_html(&log.time),
-                    msg = escape_html(&log.message)
+                    r#"<div class="status-log-entry">
+                        <div class="status-log-time">{}</div>
+                        <div class="status-log-msg">{}</div>
+                    </div>"#,
+                    escape_html(&log.time),
+                    escape_html(&log.message)
                 ));
             }
             html.push_str("</div></div>");
         }
         WazooTab::Signatures => {
-            html.push_str(
-                r#"<div class="sidebar-status">
-                    <div class="status-sec-hdr">Signatures</div>
-                    <div class="sidebar-sig-card">
-                        <div class="sidebar-sig-title">Standard</div>
-                        <div class="sidebar-sig-body">— &#10;Sent with Eudora 2026</div>
-                    </div>
-                    <div class="sidebar-sig-card">
-                        <div class="sidebar-sig-title">Alternate</div>
-                        <div class="sidebar-sig-body">Best regards,&#10;Steve Dorner</div>
-                    </div>
-                </div>"#
-            );
+            let sig_dir = state.data_dir.join("Signatures");
+            let mut sigs = macmbx::sigstat::Signatures::open(&sig_dir).ok();
+            let count = sigs.as_ref().map(|s| s.count()).unwrap_or(0);
+            if count == 0 {
+                html.push_str(
+                    r#"<div class="sidebar-status">
+                        <div class="status-sec-hdr">Signatures</div>
+                        <div class="sidebar-stat-row" style="color:var(--text-muted);font-style:italic;padding:8px 12px">No signatures configured</div>
+                    </div>"#
+                );
+            } else {
+                html.push_str(r#"<div class="sidebar-status"><div class="status-sec-hdr">Signatures</div>"#);
+                if let Some(ref mut s) = sigs {
+                    for i in 0..count {
+                        if let Some(entry) = s.entry(i) {
+                            let name = entry.name.clone();
+                            let content = s.get(i).unwrap_or("").to_string();
+                            html.push_str(&format!(
+                                r#"<div class="sidebar-sig-card">
+                                    <div class="sidebar-sig-title">{}</div>
+                                    <div class="sidebar-sig-body">{}</div>
+                                </div>"#,
+                                escape_html(&name),
+                                escape_html(&content)
+                            ));
+                        }
+                    }
+                }
+                html.push_str("</div>");
+            }
         }
         WazooTab::Stationery => {
-            html.push_str(
-                r#"<div class="sidebar-status">
-                    <div class="status-sec-hdr">Stationery Templates</div>
-                    <div class="sidebar-stat-card">
-                        <div class="sidebar-stat-title">Default Memo</div>
-                        <div class="sidebar-stat-body">MEMORANDUM&#10;To: [Recipients]&#10;From: Steve Dorner</div>
-                    </div>
-                    <div class="sidebar-stat-card">
-                        <div class="sidebar-stat-title">Formal Letter</div>
-                        <div class="sidebar-stat-body">Dear [Name],&#10;&#10;I am writing in regards to...</div>
-                    </div>
-                </div>"#
-            );
+            let stat_dir = state.data_dir.join("Stationery");
+            let mut stats = macmbx::sigstat::StationerySet::open(&stat_dir).ok();
+            let count = stats.as_ref().map(|s| s.count()).unwrap_or(0);
+            if count == 0 {
+                html.push_str(
+                    r#"<div class="sidebar-status">
+                        <div class="status-sec-hdr">Stationery Templates</div>
+                        <div class="sidebar-stat-row" style="color:var(--text-muted);font-style:italic;padding:8px 12px">No stationery templates found</div>
+                    </div>"#
+                );
+            } else {
+                html.push_str(r#"<div class="sidebar-status"><div class="status-sec-hdr">Stationery Templates</div>"#);
+                if let Some(ref mut s) = stats {
+                    for i in 0..count {
+                        if let Some(entry) = s.entry(i) {
+                            let name = entry.name.clone();
+                            let raw = s.get(i).unwrap_or(&[]);
+                            let preview = String::from_utf8_lossy(raw);
+                            let short_prev = if preview.len() > 100 { &preview[..100] } else { &preview };
+                            html.push_str(&format!(
+                                r#"<div class="sidebar-stat-card">
+                                    <div class="sidebar-stat-title">{}</div>
+                                    <div class="sidebar-stat-body">{}</div>
+                                </div>"#,
+                                escape_html(&name),
+                                escape_html(short_prev)
+                            ));
+                        }
+                    }
+                }
+                html.push_str("</div>");
+            }
         }
     }
 
@@ -2972,6 +2873,7 @@ fn render_eudora_tabs(doc: &mut Document, state: &AppState) {
             TabKind::Filters => ("📋", "Filters".to_string()),
             TabKind::Compose => ("✏", "New Message".to_string()),
             TabKind::Calendar => ("📅", "Calendar".to_string()),
+            TabKind::TaskStatus => ("⚡", "Task Status & Log".to_string()),
         };
         html.push_str(&format!(
             r#"<div class="tab{sel_cls}" data-tab-idx="{idx}">
@@ -2992,6 +2894,7 @@ fn render_eudora_tabs(doc: &mut Document, state: &AppState) {
         ("page-filters", matches!(active_tab, TabKind::Filters)),
         ("page-compose", matches!(active_tab, TabKind::Compose)),
         ("page-calendar", matches!(active_tab, TabKind::Calendar)),
+        ("page-task-status", matches!(active_tab, TabKind::TaskStatus)),
     ];
     for (page_id, is_active) in page_map {
         if let Some(el) = doc.get_element_by_id(page_id) {
@@ -3003,6 +2906,79 @@ fn render_eudora_tabs(doc: &mut Document, state: &AppState) {
                 doc.set_style_property(el, "display", "none");
             }
         }
+    }
+}
+
+fn render_eudora_task_status(doc: &mut Document, state: &AppState) {
+    if !matches!(state.active_tab(), TabKind::TaskStatus) {
+        return;
+    }
+
+    if let Some(grid) = doc.get_element_by_id("task-overview-grid") {
+        let tasks = state.compute_status_tasks();
+        let mut html = String::new();
+        for task in &tasks {
+            let pct = (task.progress * 100.0).clamp(0.0, 100.0);
+            html.push_str(&format!(
+                r#"<div class="task-stat-card">
+                    <div class="task-stat-hdr">
+                        <span class="task-stat-icon">{icon}</span>
+                        <span class="task-stat-title">{title}</span>
+                    </div>
+                    <div class="task-stat-value">{status}</div>
+                    <div class="task-stat-pbar"><div class="task-stat-fill" style="width:{pct}%;"></div></div>
+                </div>"#,
+                icon = task.icon,
+                title = escape_html(&task.title),
+                status = escape_html(&task.status),
+                pct = pct,
+            ));
+        }
+        set_inner_html_indexed(doc, grid, &html);
+    }
+
+    set_text_by_id(doc, "task-log-count", &format!("{} events logged", state.status_logs.len()));
+
+    if let Some(table) = doc.get_element_by_id("task-full-log") {
+        let mut html = String::new();
+        if state.status_logs.is_empty() {
+            html.push_str(r#"<div class="task-log-empty">No activity recorded yet. Check mail or queue a message to see events.</div>"#);
+        } else {
+            for log in state.status_logs.iter().rev() {
+                let badge_cls = if log.message.contains("failed") || log.message.contains("Error") {
+                    "badge-err"
+                } else if log.message.contains("complete") || log.message.contains("ready") || log.message.contains("Saved") {
+                    "badge-ok"
+                } else if log.message.contains("queued") || log.message.contains("CalDAV") {
+                    "badge-sync"
+                } else {
+                    "badge-info"
+                };
+                let badge_text = if log.message.contains("Mail check") {
+                    "MAIL"
+                } else if log.message.contains("CalDAV") {
+                    "CALDAV"
+                } else if log.message.contains("Storage") {
+                    "STORAGE"
+                } else if log.message.contains("queue") || log.message.contains("Send") {
+                    "QUEUE"
+                } else {
+                    "SYSTEM"
+                };
+                html.push_str(&format!(
+                    r#"<div class="task-log-row">
+                        <span class="task-log-col-time">{time}</span>
+                        <span class="task-log-col-badge {badge_cls}">{badge_text}</span>
+                        <span class="task-log-col-msg">{msg}</span>
+                    </div>"#,
+                    time = escape_html(&log.time),
+                    badge_cls = badge_cls,
+                    badge_text = badge_text,
+                    msg = escape_html(&log.message),
+                ));
+            }
+        }
+        set_inner_html_indexed(doc, table, &html);
     }
 }
 
@@ -3767,8 +3743,12 @@ fn render_eudora_welcome(doc: &mut Document, state: &AppState) {
     }
     let real_name = state.conf.get("sending_mail", "real_name")
         .or_else(|| state.conf.get("Settings", "RealName"))
-        .unwrap_or("Steve Dorner");
-    let first_name = real_name.split_whitespace().next().unwrap_or("there");
+        .unwrap_or("");
+    let first_name = if !real_name.is_empty() && real_name != "Steve Dorner" && real_name != "You" {
+        real_name.split_whitespace().next().unwrap_or("there")
+    } else {
+        "there"
+    };
 
     let hour = {
         let now_ts = std::time::SystemTime::now()
@@ -3785,25 +3765,33 @@ fn render_eudora_welcome(doc: &mut Document, state: &AppState) {
     } else {
         "Good evening"
     };
-    let greeting = format!("{}, {}", tod, first_name);
+    let greeting = if first_name == "there" {
+        "Welcome to Eudora".to_string()
+    } else {
+        format!("{}, {}", tod, first_name)
+    };
     set_text_by_id(doc, "welcome-greeting", &greeting);
 
     let email = state.conf.get("sending_mail", "email_address")
         .or_else(|| state.conf.get("Settings", "ReturnAddress"))
-        .unwrap_or("you@example.com");
+        .unwrap_or("");
     let server = state.conf.get("checking_mail", "pop_server")
         .or_else(|| state.conf.get("Settings", "MailServer"))
-        .unwrap_or("mail.example.com");
+        .unwrap_or("");
     let use_imap = state.conf.get_bool("checking_mail", "use_imap", false);
     let use_ssl = state.conf.get_bool("ssl", "use_ssl", false);
     let proto = if use_imap { "IMAP" } else { "POP3" };
     let ssl_str = if use_ssl { " • SSL" } else { "" };
-    let acct_line = format!("{} • {} • {}{}",
-        if email.is_empty() { "No email configured" } else { email },
-        proto,
-        server,
-        ssl_str
-    );
+    let acct_line = if email.is_empty() && server.is_empty() {
+        "No email account configured • Click Settings to set up your account".to_string()
+    } else {
+        format!("{} • {} • {}{}",
+            if email.is_empty() { "No email configured" } else { email },
+            proto,
+            if server.is_empty() { "No server" } else { server },
+            ssl_str
+        )
+    };
     set_text_by_id(doc, "welcome-account-line", &acct_line);
 
     let Some(stat_grid) = doc.get_element_by_id("welcome-stat-grid") else {
@@ -4171,20 +4159,26 @@ fn build_from_list(conf: &macmbx::conf::Conf) -> Vec<String> {
     let mut items = Vec::new();
     let email = conf.get("sending_mail", "email_address")
         .or_else(|| conf.get("Settings", "ReturnAddress"))
-        .unwrap_or("");
+        .unwrap_or("")
+        .trim();
     let name = conf.get("sending_mail", "real_name")
         .or_else(|| conf.get("Settings", "RealName"))
-        .unwrap_or("");
-    if !email.is_empty() {
-        if !name.is_empty() {
+        .unwrap_or("")
+        .trim();
+    if !email.is_empty() && email != "you@example.com" && email != "steve@qualcomm.com" {
+        if !name.is_empty() && name != "You" {
             items.push(format!("{} <{}>", name, email));
         } else {
             items.push(email.to_string());
         }
     }
     for acct in conf.get_all_accounts() {
-        if !acct.enabled || acct.email.is_empty() { continue; }
-        let display_name = if !acct.real_name.is_empty() { &acct.real_name } else { &acct.name };
+        if !acct.enabled || acct.email.is_empty() || acct.email == "you@example.com" || acct.email == "steve@qualcomm.com" { continue; }
+        let display_name = if !acct.real_name.is_empty() && acct.real_name != "You" {
+            &acct.real_name
+        } else {
+            &acct.name
+        };
         let item = if !display_name.is_empty() {
             format!("{} <{}>", display_name, acct.email)
         } else {
@@ -4193,9 +4187,6 @@ fn build_from_list(conf: &macmbx::conf::Conf) -> Vec<String> {
         if !items.contains(&item) {
             items.push(item);
         }
-    }
-    if items.is_empty() {
-        items.push("you@example.com".to_string());
     }
     items
 }
@@ -4678,14 +4669,18 @@ fn render_eudora_compose(doc: &mut Document, state: &mut AppState) {
     if let Some(from_el) = doc.get_element_by_id("compose-from") {
         let from_list = build_from_list(&state.conf);
         let mut opts = String::new();
-        for item in &from_list {
-            let sel = if item == &state.compose.from { " selected" } else { "" };
-            opts.push_str(&format!(r#"<option value="{}"{}>{}</option>"#, escape_html(item), sel, escape_html(item)));
+        if from_list.is_empty() {
+            opts.push_str(r#"<option value="">(No personality configured)</option>"#);
+        } else {
+            for item in &from_list {
+                let sel = if item == &state.compose.from { " selected" } else { "" };
+                opts.push_str(&format!(r#"<option value="{}"{}>{}</option>"#, escape_html(item), sel, escape_html(item)));
+            }
+            if state.compose.from.is_empty() {
+                state.compose.from = from_list[0].clone();
+            }
         }
         set_inner_html_indexed(doc, from_el, &opts);
-        if state.compose.from.is_empty() && !from_list.is_empty() {
-            state.compose.from = from_list[0].clone();
-        }
         doc.set_value(from_el, &state.compose.from);
     }
     set_text_by_id(doc, "compose-attach", &state.compose.attach);
@@ -4840,13 +4835,13 @@ fn render_email_sidebar(doc: &mut Document, state: &AppState) {
         let mut html = String::new();
         for lbl in &state.labels {
             let is_active = state.email_mode == EmailViewMode::Mail
-                && state.selected_label.as_deref() == Some(lbl.name);
+                && state.selected_label.as_deref() == Some(&lbl.name);
             let active_cls = if is_active { "active" } else { "" };
             html.push_str(&format!(
                 r#"<div class="label-item {active_cls}" data-label="{name}">
   <span class="label-dot" style="background:{color};"></span>{name}
 </div>"#,
-                name = escape_html(lbl.name),
+                name = escape_html(&lbl.name),
                 color = lbl.color,
             ));
         }
@@ -4907,13 +4902,13 @@ fn render_email_center_list(doc: &mut Document, state: &AppState) {
         };
 
         let mut pills_html = String::new();
-        for &lbl_name in &msg.labels {
-            if let Some(def) = state.labels.iter().find(|d| d.name == lbl_name) {
+        for lbl_name in &msg.labels {
+            if let Some(def) = state.labels.iter().find(|d| &d.name == lbl_name) {
                 pills_html.push_str(&format!(
                     r#"<span class="pill" style="background:{bg};color:{fg};">{name}</span>"#,
                     bg = def.bg_rgba,
                     fg = def.color,
-                    name = escape_html(def.name),
+                    name = escape_html(&def.name),
                 ));
             }
         }
@@ -5094,13 +5089,13 @@ fn render_email_right_pane(doc: &mut Document, state: &AppState) {
 
     if let Some(lbls) = doc.get_element_by_id("email-labels") {
         let mut pills = String::new();
-        for &lbl_name in &msg.labels {
-            if let Some(def) = state.labels.iter().find(|d| d.name == lbl_name) {
+        for lbl_name in &msg.labels {
+            if let Some(def) = state.labels.iter().find(|d| &d.name == lbl_name) {
                 pills.push_str(&format!(
                     r#"<span class="pill" style="background:{bg};color:{fg};">{name}</span>"#,
                     bg = def.bg_rgba,
                     fg = def.color,
-                    name = escape_html(def.name),
+                    name = escape_html(&def.name),
                 ));
             }
         }
@@ -5189,19 +5184,19 @@ fn render_settings_all(doc: &mut Document, state: &mut AppState) {
     // 1. Populate Getting Started config inputs from macmbx Conf
     let username = state.conf.get("checking_mail", "pop_username")
         .or_else(|| state.conf.get("Settings", "LoginName"))
-        .unwrap_or("you");
+        .unwrap_or("");
     let mail_srv = state.conf.get("checking_mail", "pop_server")
         .or_else(|| state.conf.get("Settings", "MailServer"))
-        .unwrap_or("mail.example.com");
+        .unwrap_or("");
     let real_name = state.conf.get("sending_mail", "real_name")
         .or_else(|| state.conf.get("Settings", "RealName"))
-        .unwrap_or("You");
+        .unwrap_or("");
     let smtp_srv = state.conf.get("sending_mail", "smtp_server")
         .or_else(|| state.conf.get("Settings", "SMTPServer"))
-        .unwrap_or("smtp.example.com");
+        .unwrap_or("");
     let email_addr = state.conf.get("sending_mail", "email_address")
         .or_else(|| state.conf.get("Settings", "ReturnAddress"))
-        .unwrap_or("you@example.com");
+        .unwrap_or("");
 
     if let Some(el) = doc.get_element_by_id("cfg-username") {
         doc.set_attribute(el, "value", username);
@@ -5247,7 +5242,7 @@ fn render_settings_all(doc: &mut Document, state: &mut AppState) {
         doc.set_attribute(el, "value", smtp_srv);
     }
     if let Some(el) = doc.get_element_by_id("send-domain") {
-        let domain = state.conf.get("sending_mail", "default_domain").unwrap_or("example.com");
+        let domain = state.conf.get("sending_mail", "default_domain").unwrap_or("");
         doc.set_attribute(el, "value", domain);
     }
 
@@ -5267,6 +5262,16 @@ fn render_settings_all(doc: &mut Document, state: &mut AppState) {
 
     // 5. Populate Personalities / Accounts
     render_settings_personalities(doc, state);
+
+    // 6. Populate Labels
+    for (i, lbl) in state.labels.iter().enumerate() {
+        if let Some(el) = doc.get_element_by_id(&format!("lbl-name-{}", i)) {
+            doc.set_attribute(el, "value", &lbl.name);
+        }
+        if let Some(el) = doc.get_element_by_id(&format!("lbl-swatch-{}", i)) {
+            doc.set_style_property(el, "background", &lbl.color);
+        }
+    }
 
     set_text_by_id(doc, "settings-status-msg", &state.settings_status);
 }
@@ -5809,6 +5814,20 @@ fn save_wizard_to_config(state: &mut AppState) {
         };
         state.conf.add_account(&acct);
     }
+    if !state.wizard.password.is_empty() {
+        state.conf.set("checking_mail", "saved_password", &state.wizard.password);
+        state.conf.set("Settings", "Password", &state.wizard.password);
+        #[cfg(target_os = "macos")]
+        {
+            use security_framework::passwords::set_generic_password;
+            let key = format!("{}@{}", login, state.wizard.incoming_server);
+            let _ = set_generic_password("gEudora", &key, state.wizard.password.as_bytes());
+            if !state.wizard.smtp_server.is_empty() && state.wizard.smtp_server != state.wizard.incoming_server {
+                let key_smtp = format!("{}@{}", login, state.wizard.smtp_server);
+                let _ = set_generic_password("gEudora", &key_smtp, state.wizard.password.as_bytes());
+            }
+        }
+    }
     let ini_path = state.data_dir.join("geudora.ini");
     let _ = state.conf.save_as(&ini_path);
     state.status_left = "✓ Account setup completed".to_string();
@@ -6056,7 +6075,7 @@ fn register_listeners(doc: &mut Document, state: Arc<Mutex<AppState>>) {
         "click",
         Box::new(move |evt, doc| {
             let mut st = state_click.lock().unwrap();
-            handle_click(doc, evt.target, &mut st);
+            handle_click(doc, evt.target, &mut st, &state_click);
         }),
         ListenerOptions::default(),
     );
@@ -6337,7 +6356,7 @@ fn handle_contextmenu(
     }
 }
 
-fn handle_click(doc: &mut Document, target: u32, state: &mut AppState) {
+fn handle_click(doc: &mut Document, target: u32, state: &mut AppState, state_arc: &Arc<Mutex<AppState>>) {
     // 0a. Formatting command bar clicks (data-command)
     if let Some(cmd_el) = doc.closest(target, "[data-command]") {
         if let Some(cmd) = doc.get_attribute(cmd_el, "data-command") {
@@ -6562,6 +6581,7 @@ fn handle_click(doc: &mut Document, target: u32, state: &mut AppState) {
                 "filters" => state.open_tab(TabKind::Filters),
                 "welcome" => state.open_tab(TabKind::Welcome),
                 "calendar" => state.open_tab(TabKind::Calendar),
+                "status" | "task-status" | "tasks" => state.open_tab(TabKind::TaskStatus),
                 _ => {}
             }
             render_active_skin(doc, state);
@@ -6834,6 +6854,11 @@ fn handle_click(doc: &mut Document, target: u32, state: &mut AppState) {
                     render_active_skin(doc, state);
                     return;
                 }
+                "open-full-status" => {
+                    state.open_tab(TabKind::TaskStatus);
+                    render_active_skin(doc, state);
+                    return;
+                }
                 "open-wizard" => {
                     state.wizard = WizardState::new_dominant();
                     state.wizard_modal_open = true;
@@ -6960,12 +6985,12 @@ fn handle_click(doc: &mut Document, target: u32, state: &mut AppState) {
                     let acct = macmbx::conf::Account {
                         index: new_idx,
                         name: new_name.clone(),
-                        real_name: state.conf.get_or("sending_mail", "real_name", "You").to_string(),
-                        email: format!("user{}@example.com", new_idx),
+                        real_name: state.conf.get_or("sending_mail", "real_name", "").to_string(),
+                        email: String::new(),
                         account_type: "IMAP".to_string(),
-                        server: "imap.example.com".to_string(),
-                        smtp_server: "smtp.example.com".to_string(),
-                        username: format!("user{}", new_idx),
+                        server: String::new(),
+                        smtp_server: String::new(),
+                        username: String::new(),
                         check_interval: 15,
                         ssl_mode: 1,
                         leave_on_server: true,
@@ -7083,22 +7108,22 @@ fn handle_click(doc: &mut Document, target: u32, state: &mut AppState) {
                     let username = doc.get_element_by_id("cfg-username")
                         .or_else(|| doc.get_element_by_id("chk-username"))
                         .and_then(|el| doc.get_attribute(el, "value"))
-                        .unwrap_or_else(|| state.conf.get("Settings", "LoginName").unwrap_or("you").to_string());
+                        .unwrap_or_else(|| state.conf.get("Settings", "LoginName").unwrap_or_default().to_string());
                     let pop_srv = doc.get_element_by_id("cfg-pop-server")
                         .or_else(|| doc.get_element_by_id("chk-pop-server"))
                         .and_then(|el| doc.get_attribute(el, "value"))
-                        .unwrap_or_else(|| state.conf.get("Settings", "MailServer").unwrap_or("mail.example.com").to_string());
+                        .unwrap_or_else(|| state.conf.get("Settings", "MailServer").unwrap_or_default().to_string());
                     let realname = doc.get_element_by_id("cfg-realname")
                         .and_then(|el| doc.get_attribute(el, "value"))
-                        .unwrap_or_else(|| state.conf.get("Settings", "RealName").unwrap_or("You").to_string());
+                        .unwrap_or_else(|| state.conf.get("Settings", "RealName").unwrap_or_default().to_string());
                     let smtp_srv = doc.get_element_by_id("cfg-smtp-server")
                         .or_else(|| doc.get_element_by_id("send-smtp"))
                         .and_then(|el| doc.get_attribute(el, "value"))
-                        .unwrap_or_else(|| state.conf.get("Settings", "SMTPServer").unwrap_or("smtp.example.com").to_string());
+                        .unwrap_or_else(|| state.conf.get("Settings", "SMTPServer").unwrap_or_default().to_string());
                     let email = doc.get_element_by_id("cfg-email")
                         .or_else(|| doc.get_element_by_id("send-email"))
                         .and_then(|el| doc.get_attribute(el, "value"))
-                        .unwrap_or_else(|| state.conf.get("Settings", "ReturnAddress").unwrap_or("you@example.com").to_string());
+                        .unwrap_or_else(|| state.conf.get("Settings", "ReturnAddress").unwrap_or_default().to_string());
                     state.save_settings(&username, &pop_srv, &realname, &smtp_srv, &email);
 
                     if let Some(el) = doc.get_element_by_id("chk-proto") {
@@ -7136,6 +7161,18 @@ fn handle_click(doc: &mut Document, target: u32, state: &mut AppState) {
                             state.conf.set_int("ssl", "ssl_imap_mode", v);
                         }
                     }
+                    for i in 0..7 {
+                        if let Some(el) = doc.get_element_by_id(&format!("lbl-name-{}", i)) {
+                            if let Some(val) = doc.get_attribute(el, "value") {
+                                if !val.trim().is_empty() {
+                                    if let Some(lbl) = state.labels.get_mut(i) {
+                                        lbl.name = val.trim().to_string();
+                                    }
+                                    state.conf.set("labels", &format!("label_{}", i), val.trim());
+                                }
+                            }
+                        }
+                    }
                     let ini_path = state.data_dir.join("geudora.ini");
                     let _ = state.conf.save_as(&ini_path);
                     state.settings_status = format!("✓ Saved configuration settings to {}", ini_path.display());
@@ -7170,25 +7207,33 @@ fn handle_click(doc: &mut Document, target: u32, state: &mut AppState) {
                     return;
                 }
                 "check-mail" => {
-                    state.reload_from_disk();
                     let mail_srv = state.conf.get("checking_mail", "pop_server")
                         .or_else(|| state.conf.get("Settings", "MailServer"))
                         .unwrap_or_default();
-                    let in_unread = state.unread_count("In");
-                    let total_msgs = state.messages.len();
+                    if mail_srv.is_empty() || mail_srv == "mail.example.com" {
+                        state.reload_from_disk();
+                        state.status_logs.push(StatusLog {
+                            time: current_clock_str(),
+                            message: "Mail check: No incoming server configured in Settings".to_string(),
+                        });
+                        state.status_left = "No mail server configured".to_string();
+                        render_active_skin(doc, state);
+                        return;
+                    }
+                    state.status_left = format!("Checking mail on {}...", mail_srv);
                     state.status_logs.push(StatusLog {
                         time: current_clock_str(),
-                        message: if !mail_srv.is_empty() && mail_srv != "mail.example.com" {
-                            format!("Mail check complete on {}: {} msgs ({} unread in In)", mail_srv, total_msgs, in_unread)
-                        } else {
-                            "Mail check: Local mailboxes reloaded (no server configured)".to_string()
-                        },
+                        message: format!("Connecting to incoming server {}...", mail_srv),
                     });
                     render_active_skin(doc, state);
+                    AppState::check_mail_bg(state_arc.clone());
                     return;
                 }
                 "new-message" => {
-                    state.compose = ComposeDraft::default();
+                    state.compose = ComposeDraft {
+                        from: state.user_identity(),
+                        ..ComposeDraft::default()
+                    };
                     state.compose_open = true;
                     state.compose_needs_init = true;
                     state.open_tab(TabKind::Compose);
@@ -7210,7 +7255,7 @@ fn handle_click(doc: &mut Document, target: u32, state: &mut AppState) {
                         };
                         state.compose = ComposeDraft {
                             title: "↩ Reply".to_string(),
-                            from: "You <you@example.com>".to_string(),
+                            from: state.user_identity(),
                             to: msg.from.clone(),
                             cc: if action == "reply-all" { msg.cc.clone() } else { String::new() },
                             bcc: String::new(),
@@ -7247,7 +7292,7 @@ fn handle_click(doc: &mut Document, target: u32, state: &mut AppState) {
                         };
                         state.compose = ComposeDraft {
                             title: "→ Forward".to_string(),
-                            from: "You <you@example.com>".to_string(),
+                            from: state.user_identity(),
                             to: String::new(),
                             cc: String::new(),
                             bcc: String::new(),
@@ -7310,10 +7355,63 @@ fn handle_click(doc: &mut Document, target: u32, state: &mut AppState) {
                     render_active_skin(doc, state);
                     return;
                 }
-                "send" | "queue" => {
+                "send" => {
                     sync_compose_from_dom(doc, state);
-                    state.send_composed_message();
-                    render_active_skin(doc, state);
+                    if state.compose.to.trim().is_empty() {
+                        state.status_left = "Please specify a recipient in the To: field".to_string();
+                        state.status_logs.push(StatusLog {
+                            time: current_clock_str(),
+                            message: "Send failed: recipient (To:) is empty".to_string(),
+                        });
+                        render_active_skin(doc, state);
+                        return;
+                    }
+                    match state.queue_composed_message() {
+                        Ok(_) => {
+                            state.status_left = "Sending message via SMTP...".to_string();
+                            state.status_logs.push(StatusLog {
+                                time: current_clock_str(),
+                                message: "Connecting to SMTP server to deliver message...".to_string(),
+                            });
+                            render_active_skin(doc, state);
+                            AppState::send_queued_mail_bg(state_arc.clone());
+                        }
+                        Err(e) => {
+                            state.status_left = format!("Cannot queue message: {}", e);
+                            state.status_logs.push(StatusLog {
+                                time: current_clock_str(),
+                                message: format!("Send failed: {}", e),
+                            });
+                            render_active_skin(doc, state);
+                        }
+                    }
+                    return;
+                }
+                "queue" => {
+                    sync_compose_from_dom(doc, state);
+                    if state.compose.to.trim().is_empty() {
+                        state.status_left = "Please specify a recipient in the To: field".to_string();
+                        state.status_logs.push(StatusLog {
+                            time: current_clock_str(),
+                            message: "Queue failed: recipient (To:) is empty".to_string(),
+                        });
+                        render_active_skin(doc, state);
+                        return;
+                    }
+                    match state.queue_composed_message() {
+                        Ok(_) => {
+                            state.status_left = "Message queued in Out mailbox".to_string();
+                            render_active_skin(doc, state);
+                        }
+                        Err(e) => {
+                            state.status_left = format!("Cannot queue message: {}", e);
+                            state.status_logs.push(StatusLog {
+                                time: current_clock_str(),
+                                message: format!("Queue failed: {}", e),
+                            });
+                            render_active_skin(doc, state);
+                        }
+                    }
                     return;
                 }
                 "save" => {
@@ -7396,58 +7494,73 @@ fn handle_click(doc: &mut Document, target: u32, state: &mut AppState) {
                     return;
                 }
                 "attach-file" => {
-                    state.compose.attach = if state.compose.attach.is_empty() || state.compose.attach == "None" {
-                        "Document.pdf (42 KB)".to_string()
-                    } else {
-                        format!("{}, Notes.txt (12 KB)", state.compose.attach)
-                    };
-                    render_active_skin(doc, state);
+                    let files = webcore::platform::dialogs::open_file("Attach File", &[], "", false);
+                    if let Some(path) = files.first() {
+                        state.compose.attachment_paths.push(path.clone());
+                        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("file");
+                        let size_str = if let Ok(meta) = std::fs::metadata(path) {
+                            let len = meta.len();
+                            if len >= 1024 * 1024 {
+                                format!("{:.1} MB", len as f64 / (1024.0 * 1024.0))
+                            } else {
+                                format!("{} KB", (len + 1023) / 1024)
+                            }
+                        } else {
+                            String::new()
+                        };
+                        let entry = if size_str.is_empty() {
+                            name.to_string()
+                        } else {
+                            format!("{} ({})", name, size_str)
+                        };
+                        state.compose.attach = if state.compose.attach.is_empty() || state.compose.attach == "None" {
+                            entry
+                        } else {
+                            format!("{}, {}", state.compose.attach, entry)
+                        };
+                        render_active_skin(doc, state);
+                    }
                     return;
                 }
                 "format-link" => {
-                    apply_formatting_command(doc, "createlink", "https://example.com");
+                    apply_formatting_command(doc, "createlink", "https://");
                     state.dirty = true;
                     return;
                 }
                 "format-image" => {
-                    if let Some(r) = get_compose_selection_range(doc) {
-                        let img = doc.create_element("img");
-                        doc.set_attribute(img, "src", "https://via.placeholder.com/150");
-                        doc.set_attribute(img, "alt", "Image");
-                        doc.insert_node(r, img);
-                        doc.style_dirty = true;
-                        doc.layout_generation = doc.layout_generation.wrapping_add(1);
+                    let files = webcore::platform::dialogs::open_file("Insert Image", &[("Images".to_string(), vec!["png".to_string(), "jpg".to_string(), "jpeg".to_string(), "gif".to_string(), "svg".to_string()])], "", false);
+                    if let Some(path) = files.first() {
+                        if let Some(r) = get_compose_selection_range(doc) {
+                            let img = doc.create_element("img");
+                            doc.set_attribute(img, "src", &path.to_string_lossy());
+                            let alt = path.file_stem().and_then(|s| s.to_str()).unwrap_or("Image");
+                            doc.set_attribute(img, "alt", alt);
+                            doc.insert_node(r, img);
+                            doc.style_dirty = true;
+                            doc.layout_generation = doc.layout_generation.wrapping_add(1);
+                        }
                     }
                     state.dirty = true;
                     return;
                 }
                 "send-queued" => {
-                    let out_path = state.data_dir.join("mailboxes").join("Out");
-                    let mut sent_count = 0;
-                    if let Ok(mut toc) = macmbx::toc::Toc::open_or_create(&out_path) {
-                        for msg in &mut toc.msgs {
-                            if msg.state == macmbx::toc::State::Queued {
-                                msg.state = macmbx::toc::State::Sent;
-                                sent_count += 1;
-                            }
-                        }
-                        let _ = toc.save();
+                    let queued_count = state.queued_count_in_outbox();
+                    if queued_count == 0 {
+                        state.status_left = "No queued messages to send".to_string();
+                        state.status_logs.push(StatusLog {
+                            time: current_clock_str(),
+                            message: "Outbox delivery: 0 queued messages to send".to_string(),
+                        });
+                        render_active_skin(doc, state);
+                        return;
                     }
-                    state.reload_from_disk();
+                    state.status_left = format!("Sending {} queued message(s)...", queued_count);
                     state.status_logs.push(StatusLog {
                         time: current_clock_str(),
-                        message: if sent_count > 0 {
-                            format!("Delivered {} queued message(s) via SMTP", sent_count)
-                        } else {
-                            "Outbox delivery: 0 queued messages to send".to_string()
-                        },
+                        message: format!("Connecting to SMTP to send {} message(s)...", queued_count),
                     });
-                    state.status_left = if sent_count > 0 {
-                        format!("Delivered {} queued messages", sent_count)
-                    } else {
-                        "No queued messages to send".to_string()
-                    };
                     render_active_skin(doc, state);
+                    AppState::send_queued_mail_bg(state_arc.clone());
                     return;
                 }
                 "open-personalities" => {
@@ -7476,7 +7589,7 @@ fn handle_click(doc: &mut Document, target: u32, state: &mut AppState) {
                     let new_c = Contact {
                         name: format!("New Contact {}", count),
                         initials: "NC".to_string(),
-                        email: format!("contact{}@example.com", count),
+                        email: String::new(),
                         color: compute_avatar_color("New Contact"),
                         ..Contact::default()
                     };
@@ -7868,6 +7981,7 @@ fn build_skin_document(skin: Skin, state: &Arc<Mutex<AppState>>, next_generation
 struct AzenGuest {
     doc: BrowserDocument,
     state: Arc<Mutex<AppState>>,
+    last_check: std::time::Instant,
 }
 
 impl BrowserGuest for AzenGuest {
@@ -7887,7 +8001,27 @@ impl BrowserGuest for AzenGuest {
             return true;
         }
 
-        dirty
+        // Periodic background mail check
+        let interval_mins = {
+            let st = self.state.lock().unwrap();
+            st.conf.get_int("checking_mail", "check_interval", 0)
+        };
+        if interval_mins > 0
+            && self.last_check.elapsed()
+                >= std::time::Duration::from_secs((interval_mins as u64) * 60)
+        {
+            self.last_check = std::time::Instant::now();
+            AppState::check_mail_bg(self.state.clone());
+        }
+
+        if dirty {
+            let mut doc = self.doc.write();
+            let mut st = self.state.lock().unwrap();
+            render_active_skin(&mut doc, &mut st);
+            return true;
+        }
+
+        false
     }
 }
 
@@ -7929,6 +8063,7 @@ fn main() {
     browser.set_guest(AzenGuest {
         doc: browser_doc,
         state,
+        last_check: std::time::Instant::now(),
     });
     browser.run().expect("browser context exited with error");
 }

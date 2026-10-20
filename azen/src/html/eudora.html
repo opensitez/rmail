@@ -69,7 +69,7 @@
 
   /* ===== Wazoo sidebar ===== */
   #wazoo {
-    width: 210px;
+    width: 235px;
     flex-shrink: 0;
     background: #f8f7f4;
     display: flex;
@@ -1918,24 +1918,47 @@
     text-align: center;
   }
   .status-act-btn:hover { background: #ece8e1; }
+  .status-act-btn.primary { background: #326ea5; color: white; border-color: #275680; }
+  .status-act-btn.primary:hover { background: #275680; }
   .status-log-wrap {
     flex: 1;
     background: white;
     border: 1px solid #dcd8d1;
     border-radius: 5px;
-    padding: 4px 6px;
+    padding: 6px 8px;
     overflow-y: auto;
-    font-family: Menlo, Monaco, monospace;
-    font-size: 7pt;
-    max-height: 180px;
+    font-size: 8pt;
+    max-height: 220px;
     color: #3b3630;
   }
   .status-log-entry {
-    margin-bottom: 3px;
+    margin-bottom: 5px;
+    padding-bottom: 5px;
+    border-bottom: 1px solid #f2eee9;
     line-height: 1.35;
-    word-break: break-all;
+    word-break: normal;
+    overflow-wrap: break-word;
   }
-  .status-log-time { color: #8c867e; margin-right: 4px; }
+  .status-log-entry:last-child {
+    border-bottom: none;
+    margin-bottom: 0;
+    padding-bottom: 0;
+  }
+  .status-log-time {
+    display: inline-block;
+    font-family: Menlo, Monaco, monospace;
+    font-size: 7pt;
+    color: #7a746c;
+    background: #ede9e3;
+    padding: 1px 4px;
+    border-radius: 3px;
+    margin-bottom: 2px;
+  }
+  .status-log-msg {
+    color: #231e19;
+    font-size: 8pt;
+    overflow-wrap: break-word;
+  }
 
   /* ===== Sidebar Signatures & Stationery ===== */
   .sidebar-sig-card, .sidebar-stat-card {
@@ -2840,6 +2863,175 @@
     cursor: not-allowed;
   }
 
+  /* ===== Task Status & Activity Log Page ===== */
+  #page-task-status {
+    flex-direction: column;
+    padding: 16px 20px;
+    overflow-y: auto;
+    background: #fdfcfb;
+    gap: 16px;
+  }
+  .task-page-header {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .task-page-title-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .task-page-title {
+    font-size: 13pt;
+    font-weight: 700;
+    color: #231e19;
+  }
+  .task-page-actions {
+    display: flex;
+    gap: 8px;
+  }
+  .task-overview-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    gap: 10px;
+  }
+  .task-stat-card {
+    background: white;
+    border: 1px solid #dcd8d1;
+    border-radius: 6px;
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+  }
+  .task-stat-hdr {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .task-stat-icon { font-size: 14px; }
+  .task-stat-title {
+    font-size: 8.5pt;
+    font-weight: 600;
+    color: #5f5a53;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .task-stat-value {
+    font-size: 10.5pt;
+    font-weight: 600;
+    color: #231e19;
+    margin-top: 2px;
+  }
+  .task-stat-pbar {
+    height: 4px;
+    background: #ebe7e1;
+    border-radius: 2px;
+    overflow: hidden;
+    margin-top: 6px;
+  }
+  .task-stat-fill {
+    height: 100%;
+    background: #2ea043;
+    border-radius: 2px;
+  }
+  .task-sec-title {
+    font-size: 10pt;
+    font-weight: 700;
+    color: #3b3630;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+  }
+  .task-log-badge {
+    font-size: 7.5pt;
+    font-weight: 600;
+    color: #6d675e;
+    background: #ebe7e1;
+    padding: 2px 6px;
+    border-radius: 4px;
+  }
+  .task-log-table-wrap {
+    border: 1px solid #dcd8d1;
+    border-radius: 6px;
+    background: white;
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+  }
+  .task-log-table {
+    display: flex;
+    flex-direction: column;
+    max-height: 450px;
+    overflow-y: auto;
+  }
+  .task-log-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 7px 12px;
+    border-bottom: 1px solid #f2eee9;
+    font-size: 9pt;
+    line-height: 1.4;
+  }
+  .task-log-row:last-child { border-bottom: none; }
+  .task-log-row:hover { background: #faf9f6; }
+  .task-log-col-time {
+    font-family: Menlo, Monaco, monospace;
+    font-size: 8pt;
+    color: #7a746c;
+    flex-shrink: 0;
+    min-width: 80px;
+  }
+  .task-log-col-badge {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    font-size: 7pt;
+    font-weight: 700;
+    padding: 2px 6px;
+    border-radius: 3px;
+    flex-shrink: 0;
+    min-width: 55px;
+    text-align: center;
+    letter-spacing: 0.3px;
+  }
+  .task-log-col-badge.badge-ok { background: #dafbe1; color: #1a7f37; }
+  .task-log-col-badge.badge-info { background: #ddf4ff; color: #0969da; }
+  .task-log-col-badge.badge-sync { background: #fff8c5; color: #9a6700; }
+  .task-log-col-badge.badge-err { background: #ffebe9; color: #cf222e; }
+  .task-log-col-msg {
+    color: #231e19;
+    flex: 1;
+    overflow-wrap: break-word;
+  }
+  .task-log-empty {
+    padding: 24px;
+    text-align: center;
+    color: #8c867e;
+    font-style: italic;
+    font-size: 9.5pt;
+  }
+
+  .dark #page-task-status { background: #131316; }
+  .dark .task-page-title { color: #f0ebe4; }
+  .dark .task-stat-card { background: #1a1a1f; border-color: #2e2e36; }
+  .dark .task-stat-title { color: #a8a29a; }
+  .dark .task-stat-value { color: #f0ebe4; }
+  .dark .task-stat-pbar { background: #2b2b33; }
+  .dark .task-sec-title { color: #ded9d2; }
+  .dark .task-log-badge { background: #2b2b33; color: #a8a29a; }
+  .dark .task-log-table-wrap { background: #1a1a1f; border-color: #2e2e36; }
+  .dark .task-log-row { border-bottom-color: #25252c; }
+  .dark .task-log-row:hover { background: #22222a; }
+  .dark .task-log-col-time { color: #8e8880; }
+  .dark .task-log-col-msg { color: #dcd8d2; }
+  .dark .task-log-col-badge.badge-ok { background: rgba(46,160,67,0.2); color: #3fb950; }
+  .dark .task-log-col-badge.badge-info { background: rgba(56,139,253,0.2); color: #58a6ff; }
+  .dark .task-log-col-badge.badge-sync { background: rgba(210,153,34,0.2); color: #e3b341; }
+  .dark .task-log-col-badge.badge-err { background: rgba(248,81,73,0.2); color: #ff7b72; }
+  .dark .status-log-time { background: #282830; color: #9c968e; }
+  .dark .status-log-msg { color: #dcd8d2; }
+
   /* Dark mode overrides for Calendar and Status */
   .dark #page-calendar,
   .dark .cal-modal-dialog,
@@ -2924,6 +3116,7 @@
     <button class="tbtn" data-action="print">🖨 Print</button>
     <button class="tbtn sep" data-action="find">🔍 Find</button>
     <button class="tbtn" data-open-tab="calendar">📅 Calendar</button>
+    <button class="tbtn" data-open-tab="status" title="Task Status &amp; Activity Log">⚡ Tasks</button>
     <button class="tbtn sep" data-action="open-wizard" title="Account Setup Wizard">🧙 Wizard</button>
     <button class="tbtn sep" data-action="open-settings">⚙ Settings</button>
     <span id="tb-spacer"></span>
@@ -2967,8 +3160,8 @@
       <!-- ===== Page: Welcome Dashboard ===== -->
       <div class="page active" id="page-welcome">
         <div class="welcome-hero">
-          <div class="welcome-greeting" id="welcome-greeting">Good day, Steve</div>
-          <div class="welcome-account-line" id="welcome-account-line">you@example.com • POP3 • mail.example.com • SSL</div>
+          <div class="welcome-greeting" id="welcome-greeting">Welcome to Eudora</div>
+          <div class="welcome-account-line" id="welcome-account-line"></div>
         </div>
         <div class="welcome-body">
           <!-- 4 Metric Stat Cards -->
@@ -3366,6 +3559,34 @@
         </div>
         <div class="cal-view-content" id="cal-view-container"></div>
       </div><!-- /page-calendar -->
+
+      <!-- ===== Page: Task Status & Activity Log ===== -->
+      <div class="page" id="page-task-status">
+        <div class="task-page-header">
+          <div class="task-page-title-row">
+            <div class="task-page-title">⚡ Task Status &amp; Activity Log</div>
+            <div class="task-page-actions">
+              <button class="tbtn" data-action="check-mail">⚡ Check Mail Now</button>
+              <button class="tbtn" data-action="send-queued">📤 Send Queued</button>
+              <button class="tbtn" data-action="status-clear-log">🧹 Clear Log</button>
+            </div>
+          </div>
+          <div class="task-overview-grid" id="task-overview-grid">
+            <!-- Dynamic task status summary cards -->
+          </div>
+        </div>
+        <div class="task-page-body">
+          <div class="task-sec-title">
+            <span>Activity &amp; Diagnostics Log</span>
+            <span class="task-log-badge" id="task-log-count">0 events</span>
+          </div>
+          <div class="task-log-table-wrap">
+            <div class="task-log-table" id="task-full-log">
+              <!-- Full width, readable log entries with time, level, message -->
+            </div>
+          </div>
+        </div>
+      </div><!-- /page-task-status -->
 
     </div><!-- /right-panel -->
   </div><!-- /content -->
